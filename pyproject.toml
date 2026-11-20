@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
+# Let Home Assistant install its httpx alias before respx is imported.
+addopts = "-p no:respx"
+filterwarnings = [
+  # Third-party deprecations that Home Assistant core also ignores in its own tests.
+  "ignore:Inheritance class HomeAssistantApplication from web.Application is discouraged:DeprecationWarning",
+  "ignore:'asyncio.iscoroutinefunction' is deprecated and slated for removal in Python 3.16:DeprecationWarning:(backoff._decorator|backoff._async)",
+]

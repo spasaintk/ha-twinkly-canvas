@@ -1,0 +1,13 @@
+{
+  "domain": "twinkly_canvas",
+  "name": "Twinkly Canvas",
+  "codeowners": ["@spasaintk"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http"],
+  "documentation": "https://github.com/spasaintk/ha-twinkly-canvas",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/spasaintk/ha-twinkly-canvas/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
