@@ -3,6 +3,7 @@
 from collections.abc import Generator
 from unittest.mock import patch
 
+from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL, UrlManager
 from homeassistant.core import HomeAssistant
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, mock_component
@@ -27,6 +28,8 @@ def fake(request: pytest.FixtureRequest) -> Generator[FakeTwinkly]:
 def config_entry(hass: HomeAssistant) -> MockConfigEntry:
     """An entry for the simulated device, not set up yet."""
     mock_component(hass, "frontend")  # needs hass_frontend; http is set up for real
+    # what the real frontend setup prepares for add_extra_js_url
+    hass.data[DATA_EXTRA_MODULE_URL] = UrlManager(lambda *_: None, [])
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=GESTALT["mac"],

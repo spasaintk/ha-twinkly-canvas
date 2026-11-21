@@ -42,6 +42,8 @@ async def _no_setup(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
         patch(
             "custom_components.twinkly_canvas.async_unload_entry", AsyncMock(return_value=True)
         ),
+        # serving the card needs the real http component, which these tests mock
+        patch("custom_components.twinkly_canvas.async_register_card", AsyncMock()),
     ):
         yield setup
         # Unload while mocked: the hass fixture unloads loaded entries only after this.

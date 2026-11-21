@@ -17,6 +17,7 @@ from .coordinator import (
     TwinklyCanvasData,
 )
 from .device import DeviceInfoData, TwinklyDevice
+from .frontend import async_register_card
 from .services import async_setup_services
 from .store import CanvasStore
 from .websocket import async_setup_websocket
@@ -28,6 +29,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the parts every entry shares."""
     async_setup_services(hass)
     async_setup_websocket(hass)
+    await async_register_card(hass)
     return True
 
 
