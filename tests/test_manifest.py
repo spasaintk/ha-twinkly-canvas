@@ -11,5 +11,5 @@ async def test_manifest_loads(hass: HomeAssistant) -> None:
     integration = await async_get_integration(hass, DOMAIN)
 
     assert integration.domain == "twinkly_canvas"
-    assert integration.version == "0.1.0"
+    assert integration.version == "0.1.1"
     assert integration.config_flow is True

@@ -13,7 +13,15 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 
 from .canvas import OFF, Canvas
-from .colors import NAMED_COLORS, RGBW, hsv_to_rgbw, parse_color, scale, to_wire
+from .colors import (
+    NAMED_COLORS,
+    RGBW,
+    blend,
+    hsv_to_rgbw,
+    parse_color,
+    scale,
+    to_wire,
+)
 
 EFFECT_KINDS = (
     "twinkle",
@@ -46,9 +54,7 @@ _LEDS_PER_SECOND: dict[str, tuple[float, float]] = {
     "rainbow": (100 / 30, 100 / 3),  # one colour wheel in 30 s to 3 s
 }
 
-_CROSSFADE_SECONDS = 0.3  # odd_even_swap
-_GAMMA = 2.2
-_LEVEL = [(v / 255) ** (1 / _GAMMA) for v in range(256)]  # drive -> perceived, 0..1
+_CROSSFADE_SECONDS = 1.0  # odd_even_swap: 11 frames at 11 fps, a visible fade
 
 
 @dataclass(frozen=True)
@@ -98,7 +104,8 @@ def loop_length(spec: EffectSpec, fps: int, max_frames: int = 240) -> int:
     elif spec.kind == "breathe":  # one fade per stop; one colour has two (dim, full)
         seconds = max(2, len(colors)) * _by_speed(spec, 4.0, 0.5)
     elif spec.kind == "odd_even_swap":  # hold, crossfade, hold swapped, fade back
-        seconds = 2 * (_by_speed(spec, 5.0, 0.5) + _CROSSFADE_SECONDS)
+        # each half as long as in 0.1.0, whose crossfade took 0.3 s
+        seconds = 2 * (_by_speed(spec, 5.0, 0.5) + 0.3)
     elif spec.kind == "twinkle":  # a fixed loop; speed sets how often each LED twinkles
         seconds = 12.0
     else:
@@ -160,12 +167,13 @@ def _effect_colors(
         return [_sample(stops, k + _ease(x - k))] * len(leds)
     if spec.kind == "odd_even_swap":
         a, b = _two(colors)[:2]
-        # the crossfade as a share of the loop
-        fade = min(0.5, _CROSSFADE_SECONDS / seconds)
+        # the crossfade as a share of the loop; at most 60% of each half, so fast
+        # loops still hold each colour for a moment
+        fade = min(0.3, _CROSSFADE_SECONDS / seconds)
         swap = _ease((min(u, 1 - u) - 0.25) / fade + 0.5)  # 0 at the start, 1 halfway
         # Odd and even are LED numbers counted from 1: index 0 is LED 1 (odd).
         return [
-            _fade(a, b, swap) if led % 2 == 0 else _fade(b, a, swap) for led in leds
+            blend(a, b, swap) if led % 2 == 0 else blend(b, a, swap) for led in leds
         ]
     if spec.kind != "twinkle":
         raise ValueError(f"Unknown effect: {spec.kind!r}")
@@ -178,7 +186,10 @@ def _effect_colors(
         # a whole number of twinkles per loop keeps the loop seamless
         cycles = max(1, round(per_loop * (0.5 + rng.random())))
         level = ((1 - math.cos(2 * math.pi * (cycles * u + phase))) / 2) ** 3
-        out.append(_fade(base.pixels[led], rng.choice(colors), level))
+        own = base.pixels[led]
+        # its own colour would not show: another, or else a dimmer version of its own
+        targets = [c for c in colors if c != own] or [scale(own, 0.3)]
+        out.append(blend(own, rng.choice(targets), level))
     return out
 
 
@@ -193,7 +204,8 @@ def _cells(kind: str, colors: tuple[RGBW, ...]) -> list[RGBW]:
             c
             for color in colors
             for c in [OFF] * 31
-            + [_fade(OFF, color, 1 - d / 9) for d in range(8, 0, -1)]
+            # the tail dims in even steps to the eye (gamma 2.2)
+            + [scale(color, (1 - d / 9) ** 2.2) for d in range(8, 0, -1)]
             + [color]
         ]
     if kind == "wave":  # a smooth cycle through the colours over 50 LEDs
@@ -222,12 +234,4 @@ def _ease(x: float) -> float:
 def _sample(seq: Sequence[RGBW], x: float) -> RGBW:
     """Colour at position x of seq repeated forever, fading between neighbours."""
     k = math.floor(x)
-    return _fade(seq[k % len(seq)], seq[(k + 1) % len(seq)], x - k)
-
-
-def _fade(a: RGBW, b: RGBW, t: float) -> RGBW:
-    """Gamma-correct fade (gamma 2.2) from a (t=0) to b (t=1): even perceived steps."""
-    return tuple(  # type: ignore[return-value]
-        round(255 * (_LEVEL[x] + (_LEVEL[y] - _LEVEL[x]) * t) ** _GAMMA)
-        for x, y in zip(a, b)
-    )
+    return blend(seq[k % len(seq)], seq[(k + 1) % len(seq)], x - k)

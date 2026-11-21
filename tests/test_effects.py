@@ -19,8 +19,11 @@ from custom_components.twinkly_canvas.effects import (
 SILVER = NAMED_COLORS["silver"]
 RED = NAMED_COLORS["red"]
 GREEN = NAMED_COLORS["green"]
+GOLD = NAMED_COLORS["gold"]
 LEDS = tuple(range(37, 80))
+ALL = tuple(range(400))
 FPS = 10
+DEVICE_FPS = 11  # what the lights play
 
 
 @pytest.fixture
@@ -28,6 +31,12 @@ def base() -> Canvas:
     canvas = Canvas(400)
     canvas.fill(SILVER)
     return canvas
+
+
+@pytest.fixture
+def stripes() -> Canvas:
+    """LEDs 1, 3, 5, ... silver and 2, 4, 6, ... red: where the strobe was seen."""
+    return Canvas(400, [SILVER if i % 2 == 0 else RED for i in range(400)])
 
 
 def _jump(a: bytes, b: bytes) -> int:
@@ -107,6 +116,66 @@ def test_deterministic(base: Canvas) -> None:
     first = render(EffectSpec("twinkle", LEDS, seed=7), base, FPS)
     assert render(EffectSpec("twinkle", LEDS, seed=7), base, FPS) == first
     assert render(EffectSpec("twinkle", LEDS, seed=8), base, FPS) != first
+
+
+@pytest.mark.parametrize("speed", [0, 0.5, 1])
+@pytest.mark.parametrize(
+    "kind", ["chase", "candy_cane", "comet", "wave", "rainbow", "odd_even_swap"]
+)
+def test_moving_light_output_is_steady(
+    kind: str, speed: float, stripes: Canvas
+) -> None:
+    """The LEDs dim by pulsing, so light follows the byte value: a pattern moving
+    between LEDs, or a swap, keeps the light of the whole tree steady (no strobe)."""
+    frames = render(EffectSpec(kind, ALL, speed=speed), stripes, DEVICE_FPS)
+    totals = [sum(frame) for frame in frames]
+    mean = sum(totals) / len(totals)
+    assert max(abs(total - mean) for total in totals) <= 0.03 * mean
+
+
+@pytest.mark.parametrize("speed", [0, 0.5])
+def test_odd_even_swap_fades(speed: float, stripes: Canvas) -> None:
+    """The swap is a fade over 10 frames or more, in small steps, not a switch."""
+    frames = render(EffectSpec("odd_even_swap", ALL, speed=speed), stripes, DEVICE_FPS)
+    ends = {to_wire(RED, "RGBW"), to_wire(SILVER, "RGBW")}
+    swap = frames[: len(frames) // 2]  # the second half swaps back
+    assert sum(_led(frame, 0) not in ends for frame in swap) >= 10
+    if speed == 0:
+        assert max(_jump(a, b) for a, b in zip(frames, frames[1:] + frames[:1])) <= 40
+
+
+def test_odd_even_swap_loop_lengths() -> None:
+    """A longer fade fits in the same loop."""
+    specs = [EffectSpec("odd_even_swap", ALL, speed=speed) for speed in (0, 0.5, 1)]
+    assert [loop_length(spec, DEVICE_FPS) for spec in specs] == [117, 41, 18]
+
+
+def test_twinkle_changes_every_led(stripes: Canvas) -> None:
+    """A twinkle colour is never the LED's own colour while the palette has another."""
+    spec = EffectSpec("twinkle", ALL, colors=(RED, SILVER, GOLD), speed=0)
+    frames = render(spec, stripes, DEVICE_FPS)
+    assert [i for i in ALL if len({_led(frame, i) for frame in frames}) == 1] == []
+
+
+def test_twinkle_in_its_own_colour_dims(stripes: Canvas) -> None:
+    """With only its own colour to twinkle to, an LED fades to about 30% and back."""
+    frames = render(
+        EffectSpec("twinkle", (0,), (SILVER,), speed=0), stripes, DEVICE_FPS
+    )
+    reds = [_led(frame, 0)[1] for frame in frames]  # W, R, G, B
+    assert 192 in reds
+    assert 0.25 * 192 <= min(reds) <= 0.35 * 192
+
+
+def test_comet_tail_keeps_its_shape() -> None:
+    """The tail dims in even steps to the eye (gamma 2.2), value for value as in 0.1.0."""
+    for v in range(256):
+        tail = _cells("comet", ((v, v, v, v),))[31:39]
+        before = [
+            round(255 * ((v / 255) ** (1 / 2.2) * (1 - d / 9)) ** 2.2)
+            for d in range(8, 0, -1)
+        ]
+        assert tail == [(x, x, x, x) for x in before]
 
 
 @pytest.mark.parametrize(
