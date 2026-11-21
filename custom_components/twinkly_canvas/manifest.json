@@ -1,6 +1,7 @@
 {
   "domain": "twinkly_canvas",
   "name": "Twinkly Canvas",
+  "categories": ["lighting.led_strips_controllers"],
   "codeowners": ["@spasaintk"],
   "config_flow": true,
   "dependencies": ["frontend", "http"],
