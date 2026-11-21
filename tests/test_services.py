@@ -222,7 +222,7 @@ async def test_find_leds_service(
     assert fake.rt_frames[1][:12] == dark * 3
     assert (fake.mode, fake.effect_id) == ("effect", 2)  # what played plays again
 
-    err = await _refused(hass, "find_leds", leds="odd")
+    err = await _refused(hass, "find_leds", leds="top")  # no such group
     assert err.translation_key == "invalid_selection"
 
 

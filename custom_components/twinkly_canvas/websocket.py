@@ -25,8 +25,8 @@ from homeassistant.helpers import config_validation as cv
 
 from .canvas import Canvas
 from .colors import NAMED_COLORS
-from .const import DOMAIN, PREFIX_BUILTIN
-from .effects import EFFECT_KINDS, EffectSpec, render
+from .const import DOMAIN, MAX_FRAMES_PER_MOVIE, PREFIX_BUILTIN
+from .effects import EFFECT_KINDS, EffectSpec, loop_length, render
 from .light import TwinklyCanvasLight
 from .movies import stranded
 from .selection import check_leds, format_selection
@@ -218,7 +218,9 @@ async def _effect_render(
     frames = await light.hass.async_add_executor_job(
         _preview, spec, light.store.canvas, fps
     )
-    return {"fps": fps, "frames": frames}
+    # A loop longer than the preview's frames plays slower, lasting as long as the lights'
+    lights_frames = loop_length(spec, fps, MAX_FRAMES_PER_MOVIE)
+    return {"fps": fps * len(frames) / lights_frames, "frames": frames}
 
 
 @_command("effect/play", _SPEC)
@@ -275,6 +277,7 @@ async def _look_rename(light: TwinklyCanvasLight, msg: dict[str, Any]) -> None:
 
 @_command("look/delete", _NAME)
 async def _look_delete(light: TwinklyCanvasLight, msg: dict[str, Any]) -> None:
+    _require_look(light, msg["name"])
     light.store.delete_look(msg["name"])
     light.async_write_ha_state()
 

@@ -1,9 +1,11 @@
 """Tests for the LED selection grammar."""
 
 import time
+from unittest.mock import patch
 
 import pytest
 
+from custom_components.twinkly_canvas import selection
 from custom_components.twinkly_canvas.selection import (
     SelectionError,
     format_selection,
@@ -36,6 +38,11 @@ def test_all():
     assert len(parse_selection("all even", 400)) == 200
 
 
+@pytest.mark.parametrize("flt", ["even", "odd", "every 3", "every 3 from 2", " ODD "])
+def test_filter_alone_selects_all(flt):
+    assert parse_selection(flt, 400) == parse_selection(f"all {flt}", 400)
+
+
 def test_groups():
     assert parse_selection("corners, 10", 400, {"Corners": "1, 200"}) == [0, 9, 199]
 
@@ -63,6 +70,14 @@ def test_group_named_often_parses_once():
         range(394)
     )
     assert time.perf_counter() - start < 0.5
+
+
+def test_group_named_often_parses_once_counted():
+    """The timing test's deterministic companion: the group's own parse runs once."""
+    with patch.object(selection, "parse_selection", wraps=parse_selection) as group:
+        spec = ", ".join(["g", " G "] * 1000)  # the outer call is not patched
+        assert parse_selection(spec, 400, {"g": "1-10"}) == list(range(10))
+    assert group.call_count == 1
 
 
 def test_error_quotes_at_most_40_characters():

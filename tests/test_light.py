@@ -215,13 +215,14 @@ async def test_off_on_keeps_app_movie(
     assert len(fake.movies) == 7  # nothing uploaded
 
 
-async def test_off_on_keeps_playlist(
-    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+@pytest.mark.parametrize("mode", ["playlist", "color", "demo"])
+async def test_off_on_keeps_device_mode(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly, mode: str
 ) -> None:
-    fake.mode = "playlist"  # chosen in the app
+    fake.mode = mode  # chosen in the app
     await _turn_off(hass)
     await _turn_on(hass)
-    assert fake.mode == "playlist"
+    assert fake.mode == mode
 
 
 async def test_turn_on_while_on_changes_nothing(

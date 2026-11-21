@@ -380,7 +380,8 @@ async def test_effect_render(
     result = await _ok(ws, "effect/render", spec=spec)
     effect = EffectSpec("twinkle", tuple(range(400)))
     assert loop_length(effect, 11) == 132  # longer than the preview
-    assert result["fps"] == 11
+    # slower, so the preview's 120 frames last as long as the 132 on the lights
+    assert result["fps"] * 132 / 120 == pytest.approx(11)
     assert len(result["frames"]) == min(120, loop_length(effect, 11))
     frames = [base64.b64decode(f) for f in result["frames"]]
     assert all(len(f) == 1600 for f in frames)
@@ -393,11 +394,29 @@ async def test_effect_render(
     result = await _ok(ws, "effect/render", spec=spec)
     effect = EffectSpec("chase", tuple(range(20)), (RED,), speed=1.0)
     assert len(result["frames"]) == min(120, loop_length(effect, 11))
+    assert result["fps"] == 11  # a short loop: the same frames as on the lights
     for frame in map(base64.b64decode, result["frames"]):
         assert frame[-4:] == bytes(
             [10, 20, 30, 40]
         )  # LED 400 keeps its colour: R,G,B,W
     assert fake.calls[calls:] == []  # a preview stays on the card
+
+
+async def test_effect_render_slow_loop(
+    hass: HomeAssistant, entry: MockConfigEntry, ws: MockHAClientWebSocket
+) -> None:
+    """The lights' loop at its frame cap: the preview lasts as long, at a lower rate."""
+    spec = {
+        "kind": "wave",
+        "leds": "all",
+        "colors": [],
+        "speed": 0,
+        "keep_others": True,
+    }
+    assert loop_length(EffectSpec("wave", tuple(range(400)), speed=0.0), 11) == 240
+    result = await _ok(ws, "effect/render", spec=spec)
+    assert len(result["frames"]) == 120
+    assert result["fps"] * 240 / 120 == pytest.approx(11)
 
 
 async def test_effect_play(
@@ -499,6 +518,7 @@ async def test_look_lifecycle(
         ("look/apply", {"name": "Golden"}),
         ("look/update", {"name": "Golden"}),
         ("look/rename", {"name": "Golden", "new_name": "Gilded"}),
+        ("look/delete", {"name": "Golden"}),
     ):
         assert await _error(ws, command, **data) == {
             "code": "invalid_format",

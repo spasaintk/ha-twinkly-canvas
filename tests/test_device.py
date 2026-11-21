@@ -743,6 +743,28 @@ async def test_new_movie_reply_without_id(
     assert fake.playing is movie
 
 
+async def test_new_movie_without_id_and_not_listed_raises(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    fake.omit_new_movie_id = True
+    get_movies = fake.get_movies
+
+    async def lagging_get_movies() -> dict:  # the list does not show our movie yet
+        data = await get_movies()
+        ours = device.store.our_movies
+        data["movies"] = [
+            m for m in data["movies"] if m["unique_id"].lower() not in ours
+        ]
+        return data
+
+    fake.get_movies = lagging_get_movies  # type: ignore[method-assign]
+    with pytest.raises(HomeAssistantError) as err:
+        await device.async_show_canvas(_canvas(), Active("painted", None))
+    assert err.value.translation_key == "device_error"
+    assert isinstance(err.value.__cause__, TwinklyResponseError)
+    assert device.store.current_movie_uid is None
+
+
 async def test_unexpected_movie_list_raises(
     device: TwinklyDevice, fake: FakeTwinkly
 ) -> None:

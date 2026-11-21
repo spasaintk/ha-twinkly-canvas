@@ -1,6 +1,7 @@
 """LED selection grammar: "1-3, 7, corners odd" -> 0-based indices.
 
-A trailing filter (odd, even, every N, every N from M) applies to the whole selection.
+A trailing filter (odd, even, every N, every N from M) applies to the whole selection;
+on its own it applies to all LEDs.
 """
 
 from __future__ import annotations
@@ -47,6 +48,8 @@ def parse_selection(
         raise SelectionError("Selection text is too long")
     if not spec:
         raise SelectionError("Selection is empty")
+    if _FILTER.fullmatch(" " + spec):  # a filter on its own filters all LEDs
+        spec = f"all {spec}"
     flt = _FILTER.search(spec)  # its match takes the comma of "1-20, odd" along
     spec = spec[: flt.start()] if flt else spec.removesuffix(",")  # "1-20,"
     lowered = {k.lower(): v for k, v in (groups or {}).items()}
