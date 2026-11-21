@@ -40,7 +40,12 @@ entity: light.test_tree
 
 Tap LEDs to select them, choose a colour and paint. With "Live on tree" on, the tree
 follows while you paint; with it off, press Apply to send the result. Find on tree
-flashes the selected LEDs for 6 seconds so you can see where they are.
+flashes the selected LEDs for 6 seconds so you can see where they are. While something
+else plays (a look, an effect or a movie from the Twinkly app), Show painting puts your
+painting back on the tree.
+
+The card works with a keyboard: the LED grid and the tabs are one stop each, move with
+the arrow keys and press Enter or Space to select.
 
 ## Actions
 

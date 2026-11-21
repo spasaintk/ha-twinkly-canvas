@@ -322,7 +322,7 @@ class TwinklyDevice:
         """HA stops: store a pending live painting at once (10 s at most), then shut down.
 
         If that fails or takes too long, the painting stays active without a movie of
-        its own, so the next start uploads it.
+        its own: the next Apply, "Painted", off and on, or Find uploads it.
         """
         self._closed = True
         if self._cancel_commit:

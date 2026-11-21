@@ -281,9 +281,8 @@ async def test_action_descriptions(hass: HomeAssistant, entry: MockConfigEntry) 
     for translation_key, (field, values) in selects.items():
         select = field["selector"]["select"]
         assert select["translation_key"] == translation_key
-        assert select["options"] == [
-            v.replace(" ", "_") for v in values
-        ]  # "off" a string
+        # "off" a string
+        assert select["options"] == [v.replace(" ", "_") for v in values]
         for option in select["options"]:
             assert labels[
                 f"component.{DOMAIN}.selector.{translation_key}.options.{option}"

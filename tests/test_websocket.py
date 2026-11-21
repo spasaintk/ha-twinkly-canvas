@@ -686,9 +686,8 @@ async def test_read_only_user_refused(
     hass_read_only_access_token: str,
 ) -> None:
     ws = await hass_ws_client(hass, hass_read_only_access_token)
-    assert (await _ok(ws, "state"))[
-        "led_count"
-    ] == 400  # reading needs read permission only
+    # reading needs read permission only
+    assert (await _ok(ws, "state"))["led_count"] == 400
     error = await _error(ws, "paint", leds=[0], color=list(RED))
     assert error["code"] == "unauthorized"
     assert entry.runtime_data.store.canvas.pixels == [OFF] * 400
