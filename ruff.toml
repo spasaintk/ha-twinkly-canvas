@@ -4,3 +4,6 @@ line-length = 88
 [lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]  # the formatter wraps code; long strings and comments are fine
+
+[lint.isort]
+combine-as-imports = true

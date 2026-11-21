@@ -45,9 +45,8 @@ class TwinklyClient:
         self._timeout = timeout
         self._token: str | None = None
         self._login_lock = asyncio.Lock()
-        self.token_epoch = (
-            0  # +1 per successful login, so callers can tell the token changed
-        )
+        # +1 per successful login, so callers can tell the token changed
+        self.token_epoch = 0
 
     async def _send(
         self,
@@ -84,9 +83,8 @@ class TwinklyClient:
             # str(), never repr(): the repr of some aiohttp errors holds the request headers.
             reason = str(err) or type(err).__name__
             raise TwinklyConnectionError(f"{method} {path}: {reason}") from err
-        except (
-            ValueError
-        ) as err:  # not JSON, so not a Twinkly reply (a wrong host, say)
+        except ValueError as err:
+            # not JSON, so not a Twinkly reply (a wrong host, say)
             raise TwinklyResponseError(
                 None, f"Not a Twinkly reply to {method} {path}"
             ) from err
@@ -139,9 +137,8 @@ class TwinklyClient:
             return await self._send(method, path, self._token, **kwargs)
         except TwinklyAuthError:
             await self._login(epoch)
-        return await self._send(
-            method, path, self._token, **kwargs
-        )  # a second 401 raises
+        # a second 401 raises
+        return await self._send(method, path, self._token, **kwargs)
 
     async def login(self) -> None:
         """Get and verify a new token; the device then rejects every older one."""

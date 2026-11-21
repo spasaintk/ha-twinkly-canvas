@@ -5,8 +5,7 @@ from __future__ import annotations
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.typing import ConfigType
@@ -83,9 +82,8 @@ async def async_unload_entry(
 ) -> bool:
     await hass.config_entries.async_unload_platforms_or_raise(entry, PLATFORMS)
     await entry.runtime_data.device.async_shutdown()
-    await (
-        entry.runtime_data.store.async_flush()
-    )  # a reload right after loads every change
+    # a reload right after loads every change
+    await entry.runtime_data.store.async_flush()
     return True
 
 

@@ -119,9 +119,8 @@ class TwinklyDevice:
         self.store = store
         self.info = info
         self._lock = asyncio.Lock()
-        self._rt_until = (
-            0.0  # loop time until which our last real-time frame holds rt mode
-        )
+        # loop time until which our last real-time frame holds rt mode
+        self._rt_until = 0.0
         # The canvas our last upload showed standing still; None: unknown, or a loop
         self._uploaded: list[RGBW] | None = None
         self._notification_id = f"{DOMAIN}_commit_failed_{store.entry_id}"
@@ -148,9 +147,8 @@ class TwinklyDevice:
         async with self._lock:
             mode = (await self.client.get_mode())["mode"]
             if mode != "rt":
-                self._rt_until = (
-                    0.0  # something else ended rt: our next frame enters it again
-                )
+                # something else ended rt: our next frame enters it again
+                self._rt_until = 0.0
             movies = await self._movie_state()
             current = await self._playing_movie(movies) if mode == "movie" else None
             return DeviceState(
@@ -337,9 +335,8 @@ class TwinklyDevice:
         self._closed = True
         self._cancel_preview()
         self._debouncer.async_shutdown()
-        async with (
-            self._lock
-        ):  # so a store flush after this holds the command's changes
+        # so a store flush after this holds the command's changes
+        async with self._lock:
             pass
 
     @asynccontextmanager
@@ -375,9 +372,8 @@ class TwinklyDevice:
 
     async def _async_send_preview(self) -> None:
         async with self._lock:
-            if (
-                not self._cancel_commit
-            ):  # a command dropped this preview while it waited
+            # a command dropped this preview while it waited
+            if not self._cancel_commit:
                 return
             try:
                 await self._send_rt(self.store.canvas.to_frame(self.info.profile))
@@ -387,9 +383,8 @@ class TwinklyDevice:
     async def _async_commit(self, _now: datetime | None = None) -> None:
         try:
             async with self._command():
-                if (
-                    self._cancel_preview()
-                ):  # False: a command dropped it while it waited
+                # False: a command dropped it while it waited
+                if self._cancel_preview():
                     await self._show_canvas(self.store.canvas, Active("painted", None))
         except HomeAssistantError as err:
             _LOGGER.warning("Could not store the painting on the lights: %s", err)
@@ -512,9 +507,8 @@ class TwinklyDevice:
         even after a new login), the whole sequence runs once more from a fresh movie list.
         """
         for attempt in (0, 1):
-            state = (
-                await self._movie_state()
-            )  # a login during this read changes nothing yet
+            # a login during this read changes nothing yet
+            state = await self._movie_state()
             epoch = self.client.token_epoch
             try:
                 await self._store_movie(state, frames, fps)
@@ -546,9 +540,8 @@ class TwinklyDevice:
             await self.client.delete_movie(listed_uid)
             self.store.remove_our_movie(listed_uid)
         uid = str(uuid.uuid4())
-        self.store.add_our_movie(
-            uid
-        )  # before it exists: no movie of ours goes untracked
+        # before it exists: no movie of ours goes untracked
+        self.store.add_our_movie(uid)
         reply = await self.client.new_movie(
             self.store.next_movie_name(),
             uid,
@@ -557,9 +550,8 @@ class TwinklyDevice:
             self.info.led_count,
             f"{self.info.profile.lower()}_raw",
         )
-        await self.client.upload_movie(
-            b"".join(frames)
-        )  # must directly follow movies/new
+        # must directly follow movies/new
+        await self.client.upload_movie(b"".join(frames))
         if (movie_id := reply.get("id")) is None:  # find our movie by its uid instead
             listed = await self._movie_state()
             movie_id = next((m.id for m in listed.movies if m.unique_id == uid), None)

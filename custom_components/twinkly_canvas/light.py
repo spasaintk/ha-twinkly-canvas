@@ -160,9 +160,8 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
                 translation_key="unknown_effect",
                 translation_placeholders={"effect": kwargs[ATTR_EFFECT]},
             )
-        if (
-            ATTR_BRIGHTNESS in kwargs
-        ):  # HA's light service turns brightness 0 into turn_off
+        # HA's light service turns brightness 0 into turn_off
+        if ATTR_BRIGHTNESS in kwargs:
             percent = max(1, round(kwargs[ATTR_BRIGHTNESS] * 100 / 255))
             await self.device.async_set_brightness(percent)
         if ATTR_RGBW_COLOR in kwargs or ATTR_RGB_COLOR in kwargs:
@@ -238,9 +237,8 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         await self.device.async_play_effect(
             spec, self.store.canvas, Active("custom_effect", None)
         )
-        self.store.set_custom_effect(
-            spec
-        )  # once it plays: a failed upload keeps the old one
+        # once it plays: a failed upload keeps the old one
+        self.store.set_custom_effect(spec)
         await self.coordinator.async_request_refresh()
 
     def effect_spec(

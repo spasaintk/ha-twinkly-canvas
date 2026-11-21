@@ -13,10 +13,8 @@ from .canvas import Canvas
 from .const import DOMAIN
 from .effects import EffectSpec
 from .movies import movie_name
-from .selection import (  # GROUP_NAME_MAX: re-export
-    GROUP_NAME_MAX as GROUP_NAME_MAX,
-)
 from .selection import (
+    GROUP_NAME_MAX as GROUP_NAME_MAX,  # GROUP_NAME_MAX: re-export
     parse_selection,
     validate_group_name,
 )

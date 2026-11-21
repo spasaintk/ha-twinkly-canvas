@@ -267,9 +267,8 @@ async def test_token_stolen_midway_restarts_once(
 async def test_token_lost_twice_raises(
     device: TwinklyDevice, fake: FakeTwinkly, caplog: pytest.LogCaptureFixture
 ) -> None:
-    fake.steal_token_after(
-        "new_movie", "new_movie"
-    )  # the frames are refused both times
+    # the frames are refused both times
+    fake.steal_token_after("new_movie", "new_movie")
     with (
         caplog.at_level(logging.DEBUG, "custom_components.twinkly_canvas.device"),
         pytest.raises(HomeAssistantError) as err,
@@ -283,9 +282,8 @@ async def test_token_lost_twice_raises(
         r for r in caplog.records if "movies/full without movies/new" in r.getMessage()
     ]
     assert [r.levelno for r in first] == [logging.DEBUG]  # the first attempt's error
-    (half,) = _own(
-        fake, device
-    )  # the half-created movie stays ours: the next upload deletes it
+    # the half-created movie stays ours: the next upload deletes it
+    (half,) = _own(fake, device)
     assert half is fake.movies[-1]
 
 
@@ -446,9 +444,8 @@ async def test_dropped_commit_restores_newest_painting(
     else:  # HA stops; the next start makes a new device on the same store
         await device.async_shutdown()
         device = TwinklyDevice(hass, fake, device.store, device.info)
-        await (
-            device.async_turn_off()
-        )  # the preview still shows: turning on alone keeps it
+        # the preview still shows: turning on alone keeps it
+        await device.async_turn_off()
     await advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit was dropped
     await device.async_turn_on()
@@ -481,9 +478,8 @@ async def test_command_drops_commit_waiting_behind_it(
 
     fake.get_movies = slow_get_movies  # type: ignore[method-assign]
     select = hass.async_create_task(device.async_select_app_movie(3))  # holds the lock
-    async_fire_time_changed(
-        hass, dt_util.utcnow() + timedelta(seconds=3)
-    )  # commit waits
+    # commit waits
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
     lookup.set()
     await select
     await advance(hass, 10)
@@ -596,9 +592,8 @@ async def test_find_blinks_then_restores(
     white, dark, dim_red = bytes([0, 255, 255, 255]), bytes(4), bytes([0, 38, 0, 0])
     assert fake.rt_frames[0][:12] == white * 2 + dim_red
     assert fake.rt_frames[1][:12] == dark * 2 + dim_red
-    assert (
-        fake.calls[calls:].count("set_mode") == 2
-    )  # rt once, not per frame; then effect
+    # rt once, not per frame; then effect
+    assert fake.calls[calls:].count("set_mode") == 2
     assert (fake.mode, fake.effect_id) == ("effect", 2)
 
 
@@ -808,9 +803,8 @@ async def test_shutdown_waits_for_the_command_in_flight(
 ) -> None:
     """Shutdown waits for a running Find; a preview frame waiting behind it never goes out."""
     fake.mode = "off"
-    find = hass.async_create_task(
-        device.async_find([0])
-    )  # holds the lock while it blinks
+    # holds the lock while it blinks
+    find = hass.async_create_task(device.async_find([0]))
     await _paint_live(device, _canvas())
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=0.6))
     await asyncio.sleep(0)  # the preview frame now waits for Find

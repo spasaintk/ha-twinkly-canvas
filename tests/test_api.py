@@ -85,9 +85,8 @@ async def test_concurrent_calls_login_once(client, aioclient_mock):
     """Every login kills the previous token, so a call that waited must reuse the new one."""
 
     async def slow_login(method, url, data):
-        await asyncio.sleep(
-            0
-        )  # let the second call start while this login is in flight
+        # let the second call start while this login is in flight
+        await asyncio.sleep(0)
         return AiohttpClientMockResponse(
             method,
             url,

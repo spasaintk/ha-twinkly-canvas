@@ -8,11 +8,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     device_registry as dr,
-)
-from homeassistant.helpers import (
     entity_registry as er,
-)
-from homeassistant.helpers import (
     issue_registry as ir,
 )
 from pytest_homeassistant.common import (
@@ -74,9 +70,8 @@ async def test_unload_saves_store_at_once(
     hass: HomeAssistant, entry: MockConfigEntry
 ) -> None:
     entry.runtime_data.store.save_group("Top", "1-10")
-    assert await hass.config_entries.async_unload(
-        entry.entry_id
-    )  # within the 1 s delay
+    # within the 1 s delay
+    assert await hass.config_entries.async_unload(entry.entry_id)
     store = CanvasStore(hass, entry.entry_id, 400)
     await store.async_load()
     assert store.groups == {"Top": "1-10"}
@@ -185,9 +180,8 @@ async def test_core_twinkly_issue(
     fake: FakeTwinkly,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    core = MockConfigEntry(
-        domain="twinkly", unique_id="AA-BB-CC-00-11-22"
-    )  # same device
+    # same device
+    core = MockConfigEntry(domain="twinkly", unique_id="AA-BB-CC-00-11-22")
     core.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     issue_id = f"core_twinkly_conflict_{config_entry.entry_id}"

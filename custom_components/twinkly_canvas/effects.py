@@ -160,9 +160,8 @@ def _effect_colors(
         return [_sample(stops, k + _ease(x - k))] * len(leds)
     if spec.kind == "odd_even_swap":
         a, b = _two(colors)[:2]
-        fade = min(
-            0.5, _CROSSFADE_SECONDS / seconds
-        )  # the crossfade as a share of the loop
+        # the crossfade as a share of the loop
+        fade = min(0.5, _CROSSFADE_SECONDS / seconds)
         swap = _ease((min(u, 1 - u) - 0.25) / fade + 0.5)  # 0 at the start, 1 halfway
         # Odd and even are LED numbers counted from 1: index 0 is LED 1 (odd).
         return [

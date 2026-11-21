@@ -219,9 +219,8 @@ async def test_look_names_unique_ignoring_case(
     store = await _load(hass)
     store.save_look(Look("Xmas", Canvas(LEDS, [RED] * LEDS), None))
     store.active = Active("look", "Xmas")
-    store.save_look(
-        Look("XMAS", Canvas(LEDS), None)
-    )  # replaces it under the new spelling
+    # replaces it under the new spelling
+    store.save_look(Look("XMAS", Canvas(LEDS), None))
     assert list(store.looks) == ["XMAS"]
     assert store.looks["XMAS"].canvas.pixels == [OFF] * LEDS
     assert store.active == Active("look", "XMAS")

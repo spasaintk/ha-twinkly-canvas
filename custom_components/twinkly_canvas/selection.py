@@ -90,9 +90,8 @@ def parse_selection(
 
 def validate_group_name(name: str) -> str:
     """The stripped name; refuses names that a selection would read as something else."""
-    name = " ".join(
-        name.split()
-    )  # selections collapse whitespace runs, so names must too
+    # selections collapse whitespace runs, so names must too
+    name = " ".join(name.split())
     if not 1 <= len(name) <= GROUP_NAME_MAX:
         raise SelectionError(f"A group name needs 1 to {GROUP_NAME_MAX} characters")
     if name.lower() in ("all", "odd", "even"):
@@ -101,9 +100,8 @@ def validate_group_name(name: str) -> str:
         raise SelectionError(f"'{name}' reads as an LED number or a range")
     if "," in name:
         raise SelectionError("A group name cannot contain a comma")
-    if _FILTER.search(
-        " " + name
-    ):  # the space also catches a name that is only a filter
+    # the space also catches a name that is only a filter
+    if _FILTER.search(" " + name):
         raise SelectionError(f"'{name}' ends in a filter (odd, even or every N)")
     return name
 

@@ -127,9 +127,8 @@ async def test_state(
     data.store.save_look(moving)
     data.store.save_look(Look("angel", Canvas(400), None))
     data.store.set_custom_effect(EffectSpec("twinkle", (5,)))
-    await data.device.async_show_canvas(
-        Canvas(400), Active("painted", None)
-    )  # ours: id 7
+    # ours: id 7
+    await data.device.async_show_canvas(Canvas(400), Active("painted", None))
     later = fake.add_app_movie("Later", 10)  # strands our movie
     await data.coordinator.async_refresh()
 
@@ -396,9 +395,8 @@ async def test_effect_render(
     assert len(result["frames"]) == min(120, loop_length(effect, 11))
     assert result["fps"] == 11  # a short loop: the same frames as on the lights
     for frame in map(base64.b64decode, result["frames"]):
-        assert frame[-4:] == bytes(
-            [10, 20, 30, 40]
-        )  # LED 400 keeps its colour: R,G,B,W
+        # LED 400 keeps its colour: R,G,B,W
+        assert frame[-4:] == bytes([10, 20, 30, 40])
     assert fake.calls[calls:] == []  # a preview stays on the card
 
 

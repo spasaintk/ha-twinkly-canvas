@@ -50,9 +50,8 @@ async def test_set_leds_service(
     store = entry.runtime_data.store
     store.set_canvas(Canvas(400, [RED] * 400))
     await _call(hass, "set_leds", leds="38-80 odd", color_name="silver")
-    assert _painted(store.canvas, SILVER) == list(
-        range(38, 79, 2)
-    )  # LEDs 39, 41 ... 79
+    # LEDs 39, 41 ... 79
+    assert _painted(store.canvas, SILVER) == list(range(38, 79, 2))
     assert store.canvas.pixels[37] == RED  # LED 38 unchanged
     assert store.canvas.pixels.count(RED) == 400 - 21
     assert fake.playing.frames == 1

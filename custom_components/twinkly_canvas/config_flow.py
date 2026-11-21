@@ -42,9 +42,8 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 gestalt = await client.gestalt()
                 firmware = await client.firmware_version()
-            except (
-                TwinklyError
-            ):  # a wrong host may answer 404, junk or 401, not only time out
+            except TwinklyError:
+                # a wrong host may answer 404, junk or 401, not only time out
                 errors["base"] = "cannot_connect"
             else:
                 # First: an older firmware may also be what leaves out the LED information.

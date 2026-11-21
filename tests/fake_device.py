@@ -113,9 +113,8 @@ class FakeTwinkly:
         self.fail_upload = False  # movies/full answers an error
         self.omit_new_movie_id = False  # movies/new answers without "id"
         self.steal_after: list[str] = []
-        self._pending: FakeMovie | None = (
-            None  # created by movies/new, waiting for movies/full
-        )
+        # created by movies/new, waiting for movies/full
+        self._pending: FakeMovie | None = None
         for n, frames in enumerate(APP_MOVIE_FRAMES, 1):
             self.add_app_movie(f"App movie {n}", frames)
 
@@ -153,9 +152,8 @@ class FakeTwinkly:
     async def login(self) -> None:
         self.token_epoch += 1
         self.logged_in = True
-        self._pending = (
-            None  # a new session: frames for an earlier movies/new are refused
-        )
+        # a new session: frames for an earlier movies/new are refused
+        self._pending = None
 
     @_device_call(auth=False)
     async def gestalt(self) -> dict:
@@ -300,9 +298,8 @@ class FakeTwinkly:
 
     @_device_call()
     async def delete_movie(self, unique_id: str) -> None:
-        if not re.fullmatch(
-            r"[0-9A-Za-z-]+", unique_id
-        ):  # the client refuses these too
+        # the client refuses these too
+        if not re.fullmatch(r"[0-9A-Za-z-]+", unique_id):
             raise ValueError(f"Refusing to delete movie {unique_id!r}")
         if not self.movies or self.movies[-1].unique_id != unique_id:
             raise TwinklyResponseError(1101, "Only the last movie, by its listed id")

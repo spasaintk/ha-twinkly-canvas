@@ -20,9 +20,8 @@ async def test_diagnostics_redacts(
     data = entry.runtime_data
     data.store.save_group("Top", "1-10")
     data.store.save_look(Look("Gold", Canvas(400), None))
-    await data.device.async_show_canvas(
-        Canvas(400), Active("painted", None)
-    )  # ours plays
+    # ours plays
+    await data.device.async_show_canvas(Canvas(400), Active("painted", None))
     await data.coordinator.async_refresh()
     diag = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(diag)

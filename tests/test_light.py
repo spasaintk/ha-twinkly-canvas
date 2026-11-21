@@ -11,10 +11,8 @@ from homeassistant.components.light import (
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
     ATTR_SUPPORTED_COLOR_MODES,
-    ColorMode,
-)
-from homeassistant.components.light import (
     DOMAIN as LIGHT_DOMAIN,
+    ColorMode,
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
