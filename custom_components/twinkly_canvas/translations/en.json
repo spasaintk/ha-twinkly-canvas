@@ -34,7 +34,100 @@
     "unknown_look": { "message": "There is no look named \"{name}\"." },
     "unknown_effect": { "message": "These lights have no effect \"{effect}\"." },
     "invalid_selection": { "message": "Invalid LED selection: {error}" },
-    "invalid_color": { "message": "Give exactly one colour: an RGB colour or a colour name." }
+    "invalid_color": { "message": "Invalid colour. Use an RGB colour with values from 0 to 255 or a colour name such as red, and give exactly one colour to set LEDs." },
+    "invalid_name": { "message": "Invalid name: {error}" },
+    "cannot_save_look": { "message": "A look can be saved from a painting, the custom effect or another look, not from a built-in effect or a movie from the Twinkly app." }
+  },
+  "services": {
+    "set_leds": {
+      "name": "Set LEDs",
+      "description": "Paints the selected LEDs in one colour and shows the result on the lights.",
+      "fields": {
+        "leds": { "name": "LEDs", "description": "LED numbers and ranges counted from 1, such as 1-37, 45, optionally followed by odd, even or every N (from M); or a group name, or all." },
+        "color": { "name": "Colour", "description": "The colour as red, green and blue values. Give this or a colour name." },
+        "color_name": { "name": "Colour name", "description": "A named colour. Give this or an RGB colour." },
+        "white": { "name": "White", "description": "Warm white from 0 to 255, added to the colour on the white channel." },
+        "clear_others": { "name": "Clear the others", "description": "Turn off all LEDs that are not selected." }
+      }
+    },
+    "play_effect": {
+      "name": "Play effect",
+      "description": "Plays a moving effect on the selected LEDs and keeps it as the custom effect. The lights store it and play it by themselves.",
+      "fields": {
+        "kind": { "name": "Effect", "description": "The kind of moving effect." },
+        "colors": { "name": "Colours", "description": "Up to 3 colours, each a colour name or a list of red, green and blue values, such as red and [192, 192, 192]. Leave empty for the effect's own colours." },
+        "leds": { "name": "LEDs", "description": "The LEDs the effect runs on: numbers and ranges counted from 1, a group name or all." },
+        "speed": { "name": "Speed", "description": "From 0 (slow) to 100 (fast)." },
+        "keep_others": { "name": "Keep the others", "description": "LEDs outside the effect keep their painted colours. When off, they are turned off." }
+      }
+    },
+    "apply_look": {
+      "name": "Apply look",
+      "description": "Shows a saved look on the lights.",
+      "fields": {
+        "look": { "name": "Look", "description": "The name of the saved look." }
+      }
+    },
+    "save_look": {
+      "name": "Save look",
+      "description": "Saves what the lights show now as a look: the painting, the custom effect or a copy of the current look. A look with the same name is replaced.",
+      "fields": {
+        "name": { "name": "Name", "description": "The name of the look, 1 to 40 characters." }
+      }
+    },
+    "find_leds": {
+      "name": "Find LEDs",
+      "description": "Blinks the selected LEDs for a few seconds with the others dimmed, then shows what was on before.",
+      "fields": {
+        "leds": { "name": "LEDs", "description": "The LEDs to find: numbers and ranges counted from 1, a group name or all." }
+      }
+    },
+    "save_group": {
+      "name": "Save group",
+      "description": "Saves a named LED selection for the other actions and the card. A group with the same name is replaced.",
+      "fields": {
+        "name": { "name": "Name", "description": "The name of the group, 1 to 40 characters." },
+        "leds": { "name": "LEDs", "description": "The LED numbers and ranges in the group, counted from 1." }
+      }
+    },
+    "delete_group": {
+      "name": "Delete group",
+      "description": "Deletes a saved group.",
+      "fields": {
+        "name": { "name": "Name", "description": "The name of the group." }
+      }
+    }
+  },
+  "selector": {
+    "color_name": {
+      "options": {
+        "off": "Off",
+        "red": "Red",
+        "green": "Green",
+        "blue": "Blue",
+        "gold": "Gold",
+        "silver": "Silver",
+        "white": "White",
+        "warm_white": "Warm white",
+        "orange": "Orange",
+        "yellow": "Yellow",
+        "purple": "Purple",
+        "pink": "Pink",
+        "cyan": "Cyan"
+      }
+    },
+    "effect_kind": {
+      "options": {
+        "twinkle": "Twinkle",
+        "chase": "Chase",
+        "odd_even_swap": "Odd/even swap",
+        "wave": "Wave",
+        "comet": "Comet",
+        "candy_cane": "Candy cane",
+        "breathe": "Breathe",
+        "rainbow": "Rainbow"
+      }
+    }
   },
   "issues": {
     "core_twinkly_conflict": {

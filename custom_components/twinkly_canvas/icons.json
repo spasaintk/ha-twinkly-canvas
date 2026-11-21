@@ -1,0 +1,11 @@
+{
+  "services": {
+    "set_leds": { "service": "mdi:led-on" },
+    "play_effect": { "service": "mdi:animation-play" },
+    "apply_look": { "service": "mdi:palette" },
+    "save_look": { "service": "mdi:content-save" },
+    "find_leds": { "service": "mdi:crosshairs-question" },
+    "save_group": { "service": "mdi:group" },
+    "delete_group": { "service": "mdi:delete" }
+  }
+}

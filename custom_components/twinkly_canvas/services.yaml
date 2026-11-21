@@ -1,0 +1,152 @@
+set_leds:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    leds:
+      required: true
+      example: "38-80 odd"
+      selector:
+        text:
+    color:
+      example: "[255, 0, 0]"
+      selector:
+        color_rgb:
+    color_name:
+      example: "silver"
+      selector:
+        select:
+          translation_key: color_name
+          options:
+            - "off"
+            - "red"
+            - "green"
+            - "blue"
+            - "gold"
+            - "silver"
+            - "white"
+            - "warm_white"
+            - "orange"
+            - "yellow"
+            - "purple"
+            - "pink"
+            - "cyan"
+    white:
+      selector:
+        number:
+          min: 0
+          max: 255
+          step: 1
+    clear_others:
+      default: false
+      selector:
+        boolean:
+
+play_effect:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    kind:
+      required: true
+      example: "chase"
+      selector:
+        select:
+          translation_key: effect_kind
+          options:
+            - "twinkle"
+            - "chase"
+            - "odd_even_swap"
+            - "wave"
+            - "comet"
+            - "candy_cane"
+            - "breathe"
+            - "rainbow"
+    colors:
+      example: '["red", [192, 192, 192]]'
+      selector:
+        object:
+    leds:
+      default: "all"
+      example: "1-100"
+      selector:
+        text:
+    speed:
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    keep_others:
+      default: true
+      selector:
+        boolean:
+
+apply_look:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    look:
+      required: true
+      example: "Red and gold"
+      selector:
+        text:
+
+save_look:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    name:
+      required: true
+      example: "Red and gold"
+      selector:
+        text:
+
+find_leds:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    leds:
+      required: true
+      example: "1-10"
+      selector:
+        text:
+
+save_group:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    name:
+      required: true
+      example: "Top"
+      selector:
+        text:
+    leds:
+      required: true
+      example: "350-400"
+      selector:
+        text:
+
+delete_group:
+  target:
+    entity:
+      integration: twinkly_canvas
+      domain: light
+  fields:
+    name:
+      required: true
+      example: "Top"
+      selector:
+        text:

@@ -16,6 +16,7 @@ from .coordinator import (
     TwinklyCanvasData,
 )
 from .device import DeviceInfoData, TwinklyDevice
+from .services import async_setup_services
 from .store import CanvasStore
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -23,6 +24,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the parts every entry shares."""
+    async_setup_services(hass)
     return True
 
 

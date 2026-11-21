@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import replace
 from typing import Any
 
 from homeassistant.components.light import (
@@ -18,6 +21,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .canvas import Canvas
+from .colors import parse_color
 from .const import (
     DOMAIN,
     EFFECT_CUSTOM,
@@ -28,11 +32,26 @@ from .const import (
 )
 from .coordinator import TwinklyCanvasConfigEntry, TwinklyCanvasData
 from .device import DeviceState
+from .effects import EffectSpec
 from .entity import TwinklyCanvasEntity
 from .movies import DeviceMovie
-from .store import Active, CanvasStore
+from .selection import parse_selection, validate_group_name
+from .store import Active, CanvasStore, Look
 
 PARALLEL_UPDATES = 1
+
+
+@contextmanager
+def _invalid(translation_key: str) -> Iterator[None]:
+    """Raise a ValueError (bad selection, colour or name) as a translated validation error."""
+    try:
+        yield
+    except ValueError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=translation_key,
+            translation_placeholders={"error": str(err)},
+        ) from err
 
 
 async def async_setup_entry(
@@ -164,3 +183,77 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
             )
         else:
             await self.device.async_select_app_movie(_app_movies(store, state)[effect].id)
+
+    # Actions (services.py); LED numbers in selections count from 1.
+
+    async def async_set_leds(
+        self,
+        leds: str,
+        clear_others: bool,
+        color: Any = None,
+        color_name: str | None = None,
+        white: int = 0,
+    ) -> None:
+        """Paint the selected LEDs one colour and show the canvas; white adds to W."""
+        if (color is None) == (color_name is None):
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="invalid_color"
+            )
+        with _invalid("invalid_color"):
+            r, g, b, w = parse_color(color_name if color is None else color)
+        indices = self._selection(leds)
+        canvas = Canvas(self.store.led_count) if clear_others else self.store.canvas.copy()
+        canvas.set(indices, (r, g, b, min(255, w + white)))
+        await self.device.async_show_canvas(canvas, Active("painted", None))
+        await self.coordinator.async_request_refresh()
+
+    async def async_play_effect(
+        self, kind: str, colors: list, leds: str, speed: float, keep_others: bool
+    ) -> None:
+        """Play a moving effect (speed 0-100) and keep it as the custom effect."""
+        with _invalid("invalid_color"):
+            parsed = tuple(parse_color(c) for c in colors)
+        spec = EffectSpec(kind, tuple(self._selection(leds)), parsed, speed / 100, keep_others)
+        await self.device.async_play_effect(
+            spec, self.store.canvas, Active("custom_effect", None)
+        )
+        self.store.set_custom_effect(spec)  # once it plays: a failed upload keeps the old one
+        await self.coordinator.async_request_refresh()
+
+    async def async_apply_look(self, look: str) -> None:
+        await self.device.async_apply_look(look)
+        await self.coordinator.async_request_refresh()
+
+    async def async_save_look(self, name: str) -> None:
+        """Save what is on now: the painting, the custom effect over it, or a copy of a look."""
+        store, active = self.store, self.store.active
+        if active.type == "painted":
+            look = Look(name, store.canvas, None)
+        elif active.type == "custom_effect":
+            look = Look(name, store.canvas, store.custom_effect)
+        elif active.type == "look":
+            look = replace(store.looks[active.ref], name=name)  # type: ignore[index]
+        else:  # a built-in effect or an app movie: there are no frames of ours to keep
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key="cannot_save_look"
+            )
+        with _invalid("invalid_name"):
+            store.save_look(look)
+        self.async_write_ha_state()  # the effect list shows the new look
+
+    async def async_find_leds(self, leds: str) -> None:
+        await self.device.async_find(self._selection(leds))
+
+    async def async_save_group(self, name: str, leds: str) -> None:
+        with _invalid("invalid_name"):
+            validate_group_name(name)
+        with _invalid("invalid_selection"):
+            self.store.save_group(name, leds)
+
+    async def async_delete_group(self, name: str) -> None:
+        self.store.delete_group(name)
+
+    def _selection(self, leds: str) -> list[int]:
+        """The 0-based indices of a selection text, which may name groups."""
+        with _invalid("invalid_selection"):
+            return parse_selection(leds, self.store.led_count, self.store.groups)
