@@ -9,7 +9,11 @@ from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.components.light.const import DATA_COMPONENT as LIGHT_ENTITIES
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+    async_get_persistent_notifications,
+)
 from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerator
 
 from custom_components.twinkly_canvas.canvas import Canvas
@@ -288,6 +292,25 @@ async def test_failed_upload_forgets_movie(
     await _light(hass, "turn_on")
     assert fake.playing is not older
     assert fake.playing.data == store.canvas.to_frame("RGBW")
+
+
+async def test_failed_timed_commit_notifies(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    """The live painting could not be stored: a notification says so until an upload works."""
+    fake.fail_upload = True
+    await _ok(ws, "paint", leds=[0], color=list(RED))
+    await advance(hass, 3)  # the live frame, then the commit fails
+    ((note_id, note),) = async_get_persistent_notifications(hass).items()
+    assert entry.entry_id in note_id
+    assert "Upload failed" in note["message"]
+
+    fake.fail_upload = False
+    await _ok(ws, "commit")
+    assert async_get_persistent_notifications(hass) == {}
 
 
 async def test_app_movie_refuses_ours(

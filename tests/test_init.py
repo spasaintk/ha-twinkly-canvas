@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     device_registry as dr,
@@ -22,7 +23,7 @@ from pytest_homeassistant.common import (
 
 from custom_components.twinkly_canvas.canvas import Canvas
 from custom_components.twinkly_canvas.const import DOMAIN
-from custom_components.twinkly_canvas.store import CanvasStore
+from custom_components.twinkly_canvas.store import Active, CanvasStore
 
 from .fake_device import GESTALT, FakeTwinkly, advance
 
@@ -79,6 +80,46 @@ async def test_unload_saves_store_at_once(
     store = CanvasStore(hass, entry.entry_id, 400)
     await store.async_load()
     assert store.groups == {"Top": "1-10"}
+
+
+async def _paint_live(entry: MockConfigEntry) -> Canvas:
+    """Paint like the card: store the canvas, then ask for its live preview."""
+    canvas = Canvas(400)
+    canvas.set(range(5), (255, 0, 0, 0))
+    entry.runtime_data.store.set_canvas(canvas)
+    await entry.runtime_data.device.async_request_preview()
+    return canvas
+
+
+async def test_stop_stores_pending_painting(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    canvas = await _paint_live(entry)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    assert fake.playing.data == canvas.to_frame("RGBW")
+    calls = len(fake.calls)
+    await advance(hass, 5)
+    assert fake.calls[calls:] == []  # no live frame, no upload
+
+
+async def test_stop_drops_painting_it_cannot_store(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly, hass_storage: dict
+) -> None:
+    """The painting stays active without a movie: the next start uploads it."""
+    device = entry.runtime_data.device
+    await device.async_show_canvas(Canvas(400), Active("painted", None))
+    await device.async_select_builtin(1)
+    await _paint_live(entry)
+    fake.fail_upload = True
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]  # written at once
+    assert stored["active"] == {"type": "painted", "ref": None}
+    assert stored["current_movie_uid"] is None
+    calls = len(fake.calls)
+    await advance(hass, 5)
+    assert fake.calls[calls:] == []
 
 
 async def test_setup_retries_when_unreachable(

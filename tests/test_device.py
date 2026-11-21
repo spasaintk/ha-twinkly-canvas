@@ -7,6 +7,7 @@ import math
 from collections.abc import AsyncGenerator, Coroutine
 from datetime import timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -538,22 +539,50 @@ async def test_preview_enters_rt_again_after_outside_change(
     assert fake.rt_frames[-1] == _canvas(WARM).to_frame("RGBW")
 
 
-async def test_preview_enters_rt_again_after_another_login(
-    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
+async def test_preview_refused_outside_rt_enters_rt_and_resends(
+    hass: HomeAssistant,
+    device: TwinklyDevice,
+    fake: FakeTwinkly,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    fake.steal_token_after(
-        "send_rt_frame"
-    )  # another client logs in after our frame ...
+    """The app ends rt and no poll sees it: the refused frame enters rt, then goes again."""
     await _paint_live(device, _canvas())
     await advance(hass, 0.6)
-    fake.mode = "effect"  # ... and ends rt
-    await _paint_live(device, _canvas(WARM))
-    await advance(hass, 0.6)  # this frame logs in again; the device drops it
+    fake.mode = "effect"
     calls = len(fake.calls)
     await _paint_live(device, _canvas(WARM))
     await advance(hass, 0.6)
-    assert fake.calls[calls:] == ["set_mode", "send_rt_frame"]
-    assert (fake.mode, fake.dropped_rt_frames) == ("rt", 1)
+    assert fake.calls[calls:] == ["send_rt_frame", "set_mode", "send_rt_frame"]
+    assert (fake.mode, fake.rt_frames[-1]) == ("rt", _canvas(WARM).to_frame("RGBW"))
+    assert fake.dropped_rt_frames == 1
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+async def test_turn_off_when_what_plays_cannot_be_read(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    fake.get_current_effect = AsyncMock(side_effect=TwinklyConnectionError("down"))
+    await device.async_turn_off()
+    assert fake.mode == "off"
+
+
+async def test_find_refused_when_the_mode_cannot_be_read(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """Off or on decides how Find ends, so it does not guess: nothing blinks."""
+    fake.get_mode = AsyncMock(side_effect=TwinklyConnectionError("down"))
+    with pytest.raises(HomeAssistantError) as err:
+        await device.async_find([0])
+    assert err.value.translation_key == "device_error"
+    assert "send_rt_frame" not in fake.calls
+
+
+async def test_find_blinks_when_what_plays_cannot_be_read(
+    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    fake.get_current_effect = AsyncMock(side_effect=TwinklyConnectionError("down"))
+    await _while_time_passes(hass, device.async_find([0]))
+    assert len(fake.rt_frames) >= 10
 
 
 async def test_find_blinks_then_restores(

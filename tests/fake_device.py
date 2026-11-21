@@ -3,7 +3,8 @@
 It follows the behaviour measured on a real device: movie storage costs frames plus
 MOVIE_OVERHEAD_FRAMES per movie, only the last movie can be deleted (and not while it
 plays), unique_ids are listed upper-cased and DELETE needs the id exactly as listed,
-and creating a movie changes neither the mode nor the current movie.
+creating a movie changes neither the mode nor the current movie, and a real-time frame
+outside rt mode is refused with code 1103.
 
 advance() is the clock helper the tests share.
 """
@@ -316,7 +317,7 @@ class FakeTwinkly:
     async def send_rt_frame(self, data: bytes) -> None:
         if len(data) != self.frame_bytes:
             raise TwinklyResponseError(1106, "Wrong frame size")
-        if self.mode == "rt":
-            self.rt_frames.append(data)
-        else:  # answered OK, but only rt mode shows the frame
+        if self.mode != "rt":  # measured: HTTP 200 with code 1103, nothing shows
             self.dropped_rt_frames += 1
+            raise TwinklyResponseError(1103, "Not in real-time mode")
+        self.rt_frames.append(data)

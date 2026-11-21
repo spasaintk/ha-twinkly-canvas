@@ -92,6 +92,7 @@ class CanvasStore:
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}"
         )
+        self.entry_id = entry_id
         self.led_count = led_count
         self._canvas = Canvas(led_count)
         self.groups: dict[str, str] = {}

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import issue_registry as ir
@@ -65,6 +66,14 @@ async def async_setup_entry(
     coordinator = TwinklyCanvasCoordinator(hass, entry, device)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = TwinklyCanvasData(client, device, coordinator, store, info)
+
+    async def _async_stop(_event: Event) -> None:
+        """HA does not unload entries when it stops: store a live painting now."""
+        await device.async_stop()
+        await store.async_flush()
+
+    # Not async_listen_once: unloading after the stop would remove it twice (an error)
+    entry.async_on_unload(hass.bus.async_listen(EVENT_HOMEASSISTANT_STOP, _async_stop))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
