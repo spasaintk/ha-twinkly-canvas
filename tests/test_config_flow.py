@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from homeassistant.config_entries import SOURCE_USER
+from homeassistant.config_entries import SOURCE_IGNORE, SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 import pytest
@@ -117,6 +117,27 @@ async def test_core_twinkly_guard(hass: HomeAssistant) -> None:
     result = await _start(hass)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "core_twinkly_configured"
+
+
+async def test_ignored_core_twinkly_does_not_block(hass: HomeAssistant) -> None:
+    MockConfigEntry(domain="twinkly", unique_id=MAC, source=SOURCE_IGNORE).add_to_hass(hass)
+    result = await _start(hass)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+async def test_old_rgb_gestalt_creates_entry(hass: HomeAssistant) -> None:
+    gestalt = {k: v for k, v in GESTALT.items() if k != "led_profile"}
+    with (
+        patch(f"{CLIENT}.gestalt", return_value={**gestalt, "bytes_per_led": 3}),
+        patch(f"{CLIENT}.firmware_version", return_value="2.6.0"),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"host": HOST}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
 
 
 async def _reconfigure(hass: HomeAssistant, gestalt=None):

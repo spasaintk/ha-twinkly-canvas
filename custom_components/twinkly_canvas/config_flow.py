@@ -12,6 +12,7 @@ import voluptuous as vol
 
 from .api import TwinklyClient, TwinklyError
 from .const import CONF_HOST, DOMAIN, MIN_FIRMWARE
+from .device import DeviceInfoData
 
 _SCHEMA = vol.Schema({vol.Required(CONF_HOST): str})
 
@@ -44,14 +45,18 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
             except TwinklyError:  # a wrong host may answer 404, junk or 401, not only time out
                 errors["base"] = "cannot_connect"
             else:
-                if abort := self._check(gestalt, firmware):
+                try:
+                    info = DeviceInfoData.from_api(gestalt, firmware, None)
+                except (KeyError, TypeError):  # setup would fail on the same gestalt
+                    return self.async_abort(reason="unsupported_device")
+                if abort := self._check(gestalt, info):
                     return self.async_abort(reason=abort)
-                unique_id = format_mac(gestalt["mac"])
+                unique_id = info.mac
                 if step_id == "user":
                     await self.async_set_unique_id(unique_id)
                     self._abort_if_unique_id_configured()
                     return self.async_create_entry(
-                        title=gestalt["device_name"], data={CONF_HOST: host}
+                        title=info.name, data={CONF_HOST: host}
                     )
                 await self.async_set_unique_id(unique_id)
                 self._abort_if_unique_id_mismatch(reason="unique_id_mismatch")
@@ -65,20 +70,19 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)
 
-    def _check(self, gestalt: dict, firmware: str) -> str | None:
+    def _check(self, gestalt: dict, info: DeviceInfoData) -> str | None:
         """The abort reason if this device cannot be used, else None."""
         # colors.to_wire supports only RGB and RGBW (not the Gold AWW strings)
-        if (
-            gestalt.get("led_profile") not in ("RGB", "RGBW")
-            or not gestalt.get("bytes_per_led")
-            or AwesomeVersion(firmware) < AwesomeVersion(MIN_FIRMWARE)
-        ):
+        if info.profile not in ("RGB", "RGBW") or AwesomeVersion(
+            info.firmware
+        ) < AwesomeVersion(MIN_FIRMWARE):
             return "unsupported_device"
         if gestalt.get("compatibility_mode") == "disabled":
             return "compatibility_mode_off"
-        mac = format_mac(gestalt["mac"])
+        # ignored entries (declined discovery) are not a configured core integration
         if any(
-            e.unique_id == mac for e in self.hass.config_entries.async_entries("twinkly")
+            e.unique_id == info.mac
+            for e in self.hass.config_entries.async_entries("twinkly", include_ignore=False)
         ):
             return "core_twinkly_configured"
         return None
