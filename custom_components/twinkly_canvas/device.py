@@ -281,15 +281,21 @@ class TwinklyDevice:
 
     async def async_apply_look(self, name: str) -> None:
         """Show a saved look, named ignoring case; its canvas becomes the canvas."""
+        self._require_look(name)  # refuse before a pending painting is dropped
+        self._cancel_preview()
+        async with self._command():
+            # Looked up again once the lock is ours: a command before us may have
+            # rewritten the look (the Previous painting slot) or deleted it
+            await self._show_look(self._require_look(name))
+
+    def _require_look(self, name: str) -> Look:
         if (look := self.store.find_look(name)) is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="unknown_look",
                 translation_placeholders={"name": name},
             )
-        self._cancel_preview()
-        async with self._command():
-            await self._show_look(look)
+        return look
 
     async def async_turn_on(self) -> None:
         """Show store.active again if the lights are off; lights that are on stay as they are."""

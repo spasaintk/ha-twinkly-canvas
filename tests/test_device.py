@@ -415,6 +415,36 @@ async def test_previous_painting_swaps_with_unsaved_painting(
     assert device.store.active == Active("painted", None)
 
 
+async def test_previous_painting_applied_twice_behind_a_busy_lock(
+    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """Two queued applies of the slot swap twice: both paintings are still there."""
+    first, second = _canvas(), _canvas(WARM, range(5))
+    device.store.save_look(Look("Warm", _canvas(WARM, range(20)), None))
+    device.store.set_canvas(first)
+    await device.async_apply_look("Warm")  # first goes into the slot
+    device.store.set_canvas(second)  # painted over the look: unsaved again
+    lookup, get_movies = asyncio.Event(), fake.get_movies
+
+    async def slow_get_movies() -> dict:
+        await lookup.wait()
+        return await get_movies()
+
+    fake.get_movies = slow_get_movies  # type: ignore[method-assign]
+    select = hass.async_create_task(device.async_select_app_movie(3))  # holds the lock
+    applies = [
+        hass.async_create_task(device.async_apply_look(PREVIOUS_PAINTING))
+        for _ in range(2)
+    ]
+    for _ in range(5):  # let both applies queue behind the lock
+        await asyncio.sleep(0)
+    lookup.set()
+    await asyncio.gather(select, *applies)
+    assert device.store.canvas.pixels == second.pixels
+    assert device.store.looks[PREVIOUS_PAINTING].canvas.pixels == first.pixels
+    assert fake.playing.data == second.to_frame("RGBW")
+
+
 async def test_previous_painting_is_one_slot(device: TwinklyDevice) -> None:
     """One slot under one spelling; a canvas a look holds (moving: its base) stays out."""
     store = device.store
