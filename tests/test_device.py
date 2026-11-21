@@ -388,6 +388,61 @@ async def test_command_cancels_pending_preview(
     assert len(fake.movies) == 7
 
 
+async def test_command_drops_commit_waiting_behind_it(
+    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """The 3 s commit fires while the app movie is looked up; the newer command wins."""
+    await _paint_live(device, _canvas())
+    lookup, get_movies = asyncio.Event(), fake.get_movies
+
+    async def slow_get_movies() -> dict:
+        await lookup.wait()
+        return await get_movies()
+
+    fake.get_movies = slow_get_movies  # type: ignore[method-assign]
+    select = hass.async_create_task(device.async_select_app_movie(3))  # holds the lock
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))  # commit waits
+    lookup.set()
+    await select
+    await _advance(hass, 10)
+    assert fake.playing is fake.movies[3]
+    assert device.store.active == Active("app_movie", fake.movies[3].unique_id.lower())
+    assert (fake.calls.count("new_movie"), fake.rt_frames) == (0, [])
+
+
+@pytest.mark.parametrize("live", [True, False])
+async def test_commit_behind_find_keeps_strokes_made_meanwhile(
+    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly, live: bool
+) -> None:
+    """A commit waiting for Find stores the canvas as it is once it runs.
+
+    Live, the 3 s commit fires during the blink; not live, Apply is pressed during it.
+    """
+
+    async def paint(led: int, color: tuple) -> None:  # like the card
+        canvas = device.store.canvas.copy()
+        canvas.set([led], color)
+        device.store.set_canvas(canvas)
+        if live:
+            await device.async_request_preview()
+
+    await paint(0, RED)
+    find = hass.async_create_task(device.async_find([5]))  # holds the lock for 6 s
+    if live:
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))
+    else:
+        hass.async_create_task(device.async_commit_now())
+    await asyncio.sleep(0)  # the commit waits for Find
+    await paint(1, WARM)
+    while not find.done():
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=0.5))
+        await asyncio.sleep(0)
+    await hass.async_block_till_done()  # the waiting commit runs
+    await _advance(hass, 10)  # then any later one
+    assert device.store.canvas.pixels[:2] == [RED, WARM]
+    assert fake.playing.data == device.store.canvas.to_frame("RGBW")
+
+
 async def test_preview_enters_rt_again_after_outside_change(
     hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
 ) -> None:

@@ -118,6 +118,7 @@ class TwinklyDevice:
         self._rt_epoch = 0  # the client's token epoch when we sent that frame
         # The canvas our last upload showed (an effect: its base); None: unknown after a start
         self._uploaded: list[RGBW] | None = None
+        # Set from a live paint until its commit runs under the lock or a command drops it
         self._cancel_commit: CALLBACK_TYPE | None = None
         self._closed = False  # shut down: no timer may start again
         self._debouncer = Debouncer(
@@ -180,8 +181,9 @@ class TwinklyDevice:
 
         Painting with live off only changes the stored canvas.
         """
-        if self._cancel_commit or self.store.canvas.pixels != self._uploaded:
-            await self.async_show_canvas(self.store.canvas, Active("painted", None))
+        async with self._command():  # the canvas as it is once the lock is ours
+            if self._cancel_preview() or self.store.canvas.pixels != self._uploaded:
+                await self._show_canvas(self.store.canvas, Active("painted", None))
 
     async def async_find(self, indices: list[int]) -> None:
         """Blink the LEDs at indices, the others dimmed, then show what was shown before."""
@@ -293,14 +295,15 @@ class TwinklyDevice:
     def _cancel_preview(self) -> bool:
         """Drop a pending live preview and its commit: a newer command wins.
 
-        True when a commit was pending. The painting was then the newest thing on the
-        lights, so it becomes active without a movie of its own: restore uploads it. A
-        caller that shows something else sets active itself afterwards.
+        True when a commit was pending, its timer running or fired and waiting for the lock.
+        The painting was then the newest thing on the lights, so it becomes active without
+        a movie of its own: restore uploads it. A caller that shows something else sets
+        active itself afterwards.
         """
         self._debouncer.async_cancel()
         if not self._cancel_commit:
             return False
-        self._cancel_commit()
+        self._cancel_commit()  # does nothing once the timer fired
         self._cancel_commit = None
         self.store.current_movie_uid = None
         self.store.active = Active("painted", None)
@@ -316,9 +319,10 @@ class TwinklyDevice:
                 _LOGGER.debug("Live preview frame not shown: %s", err)
 
     async def _async_commit(self, _now: datetime) -> None:
-        self._cancel_commit = None
         try:
-            await self.async_show_canvas(self.store.canvas, Active("painted", None))
+            async with self._command():
+                if self._cancel_preview():  # False: a command dropped it while it waited
+                    await self._show_canvas(self.store.canvas, Active("painted", None))
         except HomeAssistantError as err:
             _LOGGER.warning("Could not store the painting on the lights: %s", err)
 
