@@ -132,9 +132,16 @@ same. Example: `1-20, 50, Top odd`.
 ## Notes
 
 - One login at a time: the Twinkly app and this integration log each other out, so
-  after using the app the integration logs in again on its next poll.
+  after using the app the integration logs in again on its next poll. Home Assistant's
+  built-in Twinkly integration would do the same, so Twinkly Canvas refuses to add
+  lights that the built-in integration already holds.
+- Applying a look or a colour for the whole tree keeps an unsaved painting as the look
+  "Previous painting" (one slot, replaced each time), so you can bring it back. A scene
+  that restores "Painted" shows the canvas as it is at that moment.
 - Movies made in the Twinkly app are never deleted. The integration only removes movies
   it created itself.
+- Removing the integration leaves its own movies on the lights. They are named
+  "Canvas 1", "Canvas 2" and so on; delete them in the Twinkly app.
 - The light has limited movie memory. The card's Moving tab shows a memory meter. A
   movie of this integration that sits before a movie made in the Twinkly app is shown
   as "N stranded": it is not removed automatically, because the integration only
@@ -144,8 +151,10 @@ same. Example: `1-20, 50, Top odd`.
 
 ## Development
 
+The virtual environment needs Python 3.14:
+
 ```
-python -m venv .venv
+python3.14 -m venv .venv
 .venv/bin/pip install -r requirements_test.txt
 .venv/bin/pytest
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
@@ -158,6 +167,9 @@ installed):
 .venv/bin/pip install playwright && .venv/bin/playwright install chromium
 .venv/bin/pytest tests/frontend
 ```
+
+On a fresh Linux install Chromium with its system libraries instead:
+`.venv/bin/playwright install --with-deps chromium`.
 
 ## Licence
 
