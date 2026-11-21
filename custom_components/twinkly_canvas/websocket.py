@@ -172,7 +172,7 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
             "max_movies": movies.max_movies,
             "stranded": stranded(movies, set(store.our_movies)),
         },
-        "active": asdict(store.active),
+        "active": asdict(light.device.playing(state)),
         "mode": state.mode,
         "colors": NAMED_COLORS,
         "effects": EFFECT_KINDS,

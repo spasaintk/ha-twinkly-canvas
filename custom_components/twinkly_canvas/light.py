@@ -115,16 +115,14 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
 
     @property
     def effect(self) -> str | None:
-        """The entry for what plays: the device mode first, then store.active."""
+        """The entry for what plays (TwinklyDevice.playing); None for device modes."""
         state = self.coordinator.data
-        if state.mode == "effect":
-            return f"{PREFIX_BUILTIN}{state.effect_id + 1}"
-        if state.mode != "movie" or (movie := state.current_movie) is None:
-            return None
-        if movie.unique_id not in self.store.our_movies:
+        active = self.device.playing(state)
+        if active.type == "builtin":
+            return f"{PREFIX_BUILTIN}{int(active.ref) + 1}"  # type: ignore[arg-type]
+        if active.type == "app_movie":
             apps = _app_movies(self.store, state)
-            return next((name for name, m in apps.items() if m == movie), None)
-        active = self.store.active
+            return next((n for n, m in apps.items() if m.unique_id == active.ref), None)
         return {
             "painted": EFFECT_PAINTED,
             "custom_effect": EFFECT_CUSTOM,
@@ -133,14 +131,18 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
 
     @property
     def color_mode(self) -> ColorMode:
-        # HA allows BRIGHTNESS only while an effect runs; a painted canvas takes colours
-        if self.effect in (None, EFFECT_PAINTED):
+        # HA allows BRIGHTNESS only while an effect runs. A scene restores the colour of
+        # the colour mode, so a painting reports one only when it is a single colour.
+        effect = self.effect
+        if effect is None or (
+            effect == EFFECT_PAINTED and self.store.canvas.uniform_color()
+        ):
             return self._color_mode
         return ColorMode.BRIGHTNESS
 
     @property
     def rgbw_color(self) -> tuple[int, int, int, int] | None:
-        if self.store.active.type == "painted":
+        if self.effect == EFFECT_PAINTED:
             return self.store.canvas.uniform_color()
         return None
 
@@ -166,10 +168,12 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         if ATTR_RGBW_COLOR in kwargs or ATTR_RGB_COLOR in kwargs:
             canvas = Canvas(self.store.led_count)
             canvas.fill(kwargs.get(ATTR_RGBW_COLOR) or (*kwargs[ATTR_RGB_COLOR], 0))
-            await self.device.async_show_canvas(canvas, Active("painted", None))
+            await self.device.async_show_canvas(
+                canvas, Active("painted", None), keep_painting=True
+            )
         elif ATTR_EFFECT in kwargs:
             await self._async_select_effect(kwargs[ATTR_EFFECT])
-        elif ATTR_BRIGHTNESS not in kwargs or not self.is_on:
+        else:  # it reads the mode: lights that are on keep what plays
             await self.device.async_turn_on()
         await self.coordinator.async_request_refresh()
 
@@ -181,7 +185,7 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         """Show an effect list entry (async_turn_on checked it); its prefix says what it is."""
         store, state = self.store, self.coordinator.data
         if effect == EFFECT_PAINTED:
-            await self.device.async_show_canvas(store.canvas, Active("painted", None))
+            await self.device.async_show_painting()
         elif effect == EFFECT_CUSTOM:
             await self.device.async_play_effect(
                 store.custom_effect, store.canvas, Active("custom_effect", None)
@@ -255,14 +259,14 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
 
     async def async_save_look(self, name: str) -> None:
         """Save what is on now: the painting, the custom effect over it, or a copy of a look."""
-        store, active = self.store, self.store.active
+        store, active = self.store, self.device.playing(self.coordinator.data)
         if active.type == "painted":
             look = Look(name, store.canvas, None)
         elif active.type == "custom_effect":
             look = Look(name, store.canvas, store.custom_effect)
         elif active.type == "look" and (current := store.find_look(active.ref or "")):
             look = replace(current, name=name)
-        else:  # a built-in effect or an app movie: there are no frames of ours to keep
+        else:  # app content (a built-in effect, a movie, a mode): no frames of ours
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="cannot_save_look"
             )

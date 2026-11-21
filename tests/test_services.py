@@ -172,6 +172,7 @@ async def test_look_names_ignore_case(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
 ) -> None:
     store = entry.runtime_data.store
+    await _call(hass, "set_leds", leds="all", color_name="off")  # a painting plays
     await _call(hass, "save_look", name="Xmas")
     await _call(hass, "set_leds", leds="1-10", color_name="gold")
     await _call(hass, "save_look", name="XMAS")

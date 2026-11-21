@@ -21,6 +21,7 @@ from custom_components.twinkly_canvas.api import (
     TwinklyResponseError,
 )
 from custom_components.twinkly_canvas.canvas import Canvas
+from custom_components.twinkly_canvas.const import PREVIOUS_PAINTING
 from custom_components.twinkly_canvas.device import DeviceInfoData, TwinklyDevice
 from custom_components.twinkly_canvas.effects import EffectSpec, loop_length, render
 from custom_components.twinkly_canvas.movies import MovieState, stranded
@@ -347,9 +348,9 @@ async def test_commit_now(
     await advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit timer was cancelled
     assert fake.rt_frames == [canvas.to_frame("RGBW")]  # only the upload bridge
-    calls = len(fake.calls)
-    await device.async_commit_now()  # nothing changed since
-    assert len(fake.calls) == calls
+    await device.async_commit_now()  # nothing changed since: no second upload
+    assert fake.calls.count("new_movie") == 1
+    assert fake.playing.data == canvas.to_frame("RGBW")
 
 
 async def test_commit_now_stores_a_changed_canvas(
@@ -364,9 +365,72 @@ async def test_commit_now_stores_a_changed_canvas(
     assert device.store.active == Active("painted", None)
     device.store.save_look(Look("Moving", _canvas(RED), CHASE))
     await device.async_apply_look("Moving")
-    calls = len(fake.calls)
-    await device.async_commit_now()  # nothing painted since: the look keeps playing
-    assert len(fake.calls) == calls
+    # Apply shows the painting under the moving look, standing still
+    await device.async_commit_now()
+    assert (fake.playing.frames, fake.playing.data) == (1, _canvas().to_frame("RGBW"))
+    assert device.store.active == Active("painted", None)
+
+
+async def test_commit_now_plays_the_painting_again(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """Apply with nothing new shows our movie again instead of uploading it twice."""
+    await device.async_show_canvas(_canvas(), Active("painted", None))
+    ours, movies = fake.playing, len(fake.movies)
+    await device.async_select_builtin(1)
+    await device.async_commit_now()
+    assert fake.playing is ours
+    assert (len(fake.movies), fake.calls.count("new_movie")) == (movies, 1)
+    assert device.store.active == Active("painted", None)
+
+
+async def test_look_keeps_unsaved_painting(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """A look over a painting no look holds keeps it; applying that brings it back."""
+    painting = _canvas()
+    device.store.save_look(Look("Warm", _canvas(WARM, range(20)), None))
+    device.store.set_canvas(painting)
+    await device.async_apply_look("Warm")
+    kept = device.store.looks[PREVIOUS_PAINTING]
+    assert (kept.canvas.pixels, kept.effect) == (painting.pixels, None)
+
+    await device.async_apply_look(PREVIOUS_PAINTING)  # over the saved look Warm
+    assert fake.playing.data == painting.to_frame("RGBW")
+    assert device.store.active == Active("look", PREVIOUS_PAINTING)
+    assert device.store.looks[PREVIOUS_PAINTING].canvas.pixels == painting.pixels
+
+
+async def test_previous_painting_swaps_with_unsaved_painting(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    first, second = _canvas(), _canvas(WARM, range(5))
+    device.store.save_look(Look("Warm", _canvas(WARM, range(20)), None))
+    device.store.set_canvas(first)
+    await device.async_apply_look("Warm")
+    device.store.set_canvas(second)  # painted over the look: unsaved again
+    await device.async_apply_look(" previous painting ")
+    assert device.store.looks[PREVIOUS_PAINTING].canvas.pixels == second.pixels
+    assert device.store.canvas.pixels == first.pixels
+    assert fake.playing.data == first.to_frame("RGBW")
+    assert device.store.active == Active("painted", None)
+
+
+async def test_previous_painting_is_one_slot(device: TwinklyDevice) -> None:
+    """One slot under one spelling; a canvas a look holds (moving: its base) stays out."""
+    store = device.store
+    store.save_look(Look("previous painting", Canvas(LEDS), None))
+    store.save_look(Look("Moving", _canvas(), CHASE))
+    store.save_look(Look("Warm", _canvas(WARM, range(20)), None))
+    store.set_canvas(_canvas())  # the moving look's canvas
+    await device.async_apply_look("Warm")
+    assert store.looks["previous painting"].canvas.pixels == Canvas(LEDS).pixels
+
+    painting = _canvas(WARM, range(5))
+    store.set_canvas(painting)
+    await device.async_apply_look("Warm")
+    assert sorted(store.looks) == ["Moving", PREVIOUS_PAINTING, "Warm"]
+    assert store.looks[PREVIOUS_PAINTING].canvas.pixels == painting.pixels
 
 
 @pytest.mark.parametrize("drop", ["turn_off", "unload"])

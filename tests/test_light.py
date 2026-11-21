@@ -1,5 +1,7 @@
 """Tests for the light entity, run against the simulated device."""
 
+import asyncio
+
 import pytest
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -24,9 +26,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.twinkly_canvas.canvas import Canvas
+from custom_components.twinkly_canvas.const import DOMAIN
 from custom_components.twinkly_canvas.effects import EffectSpec
 from custom_components.twinkly_canvas.store import Look
 
@@ -255,6 +259,123 @@ async def test_brightness_turns_on_when_off(
     await _turn_on(hass, brightness=128)
     assert fake.brightness == 50
     assert fake.mode != "off"
+
+
+async def test_brightness_turns_on_within_refresh_cooldown(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    """Brightness alone turns on lights that are off, even before HA has seen the off."""
+    await _turn_on(hass, effect="Built-in 2")  # refreshed: the next refresh waits 10 s
+    await _turn_off(hass)
+    await _turn_on(hass, brightness=128)
+    assert (fake.mode, fake.effect_id, fake.brightness) == ("effect", 1, 50)
+
+
+async def test_scene_restores_painting(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A snapshot of a painting brings it back: HA turns on effect "Painted"."""
+    assert await async_setup_component(hass, "scene", {})
+    await hass.async_block_till_done()  # scene.create comes with a later platform
+    await hass.services.async_call(
+        DOMAIN,
+        "set_leds",
+        {ATTR_ENTITY_ID: ENTITY, "leds": "1-10", "color_name": "red"},
+        blocking=True,
+    )
+    assert _attr(hass, ATTR_EFFECT) == "Painted"
+    assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.BRIGHTNESS  # not one colour
+    await hass.services.async_call(
+        "scene",
+        "create",
+        {"scene_id": "before", "snapshot_entities": [ENTITY]},
+        blocking=True,
+    )
+    await _turn_on(hass, effect="Built-in 3")
+    await advance(hass, 10)  # the refresh after a refresh waits for its cooldown
+    assert fake.mode == "effect"
+
+    await hass.services.async_call(
+        "scene", "turn_on", {ATTR_ENTITY_ID: "scene.before"}, blocking=True
+    )
+    red, off = bytes([0, 255, 0, 0]), bytes(4)  # W, R, G, B
+    assert fake.playing.data == red * 10 + off * 390
+    assert not [r for r in caplog.records if r.name.endswith("reproduce_state")]
+
+
+async def test_live_preview_reports_painted(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    data = entry.runtime_data
+    canvas = Canvas(400)
+    canvas.set(range(10), (255, 0, 0, 0))
+    data.store.set_canvas(canvas)  # the card stores the painting, then previews it
+    await data.device.async_request_preview()
+    await advance(hass, 0.6)
+    await data.coordinator.async_refresh()
+    assert fake.mode == "rt"
+    assert _attr(hass, ATTR_EFFECT) == "Painted"
+    assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.BRIGHTNESS
+
+
+async def test_color_keeps_unsaved_painting(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    store = entry.runtime_data.store
+    for leds, color in (("1-10", "red"), ("11-20", "gold")):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_leds",
+            {ATTR_ENTITY_ID: ENTITY, "leds": leds, "color_name": color},
+            blocking=True,
+        )
+    assert store.looks == {}  # paint edits never keep the painting they change
+    painting = store.canvas.copy()
+    await _turn_on(hass, rgbw_color=(0, 0, 0, 255))
+    assert store.looks["Previous painting"].canvas.pixels == painting.pixels
+    await _turn_on(hass, effect="Look: Previous painting")
+    assert fake.playing.data == painting.to_frame("RGBW")
+
+
+async def test_color_over_one_colour_keeps_nothing(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> None:
+    await _turn_on(hass, rgbw_color=(0, 0, 0, 255))  # over the dark canvas
+    await _turn_on(hass, rgb_color=(255, 0, 0))  # over warm white
+    assert entry.runtime_data.store.looks == {}
+
+
+async def test_painted_shows_strokes_made_while_waiting(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    """Picking "Painted" shows the canvas as it is once the device is free."""
+    data = entry.runtime_data
+    lookup, get_movies = asyncio.Event(), fake.get_movies
+
+    async def slow_get_movies() -> dict:
+        await lookup.wait()
+        return await get_movies()
+
+    fake.get_movies = slow_get_movies  # type: ignore[method-assign]
+    # selecting an app movie holds the lock while it waits for the movie list
+    select = hass.async_create_task(data.device.async_select_app_movie(3))
+    painted = hass.async_create_task(_turn_on(hass, effect="Painted"))
+    for _ in range(100):  # until "Painted" waits for the lock
+        if data.device._lock._waiters:
+            break
+        await asyncio.sleep(0)
+    assert data.device._lock._waiters
+    canvas = data.store.canvas.copy()
+    canvas.set([0], (255, 0, 0, 0))
+    data.store.set_canvas(canvas)  # a stroke, painted with live off
+    lookup.set()
+    await select
+    await painted
+    assert data.store.canvas.pixels[0] == (255, 0, 0, 0)
+    assert fake.playing.data == data.store.canvas.to_frame("RGBW")
 
 
 async def test_unavailable_when_unreachable(

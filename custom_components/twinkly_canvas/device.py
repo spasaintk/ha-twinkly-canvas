@@ -33,6 +33,7 @@ from .const import (
     LIVE_DEBOUNCE,
     MAX_FPS,
     MAX_FRAMES_PER_MOVIE,
+    PREVIOUS_PAINTING,
     RT_TIMEOUT_SECONDS,
 )
 from .effects import EffectSpec, render
@@ -98,6 +99,7 @@ class DeviceState:
     effects_count: int
     current_movie: DeviceMovie | None  # the playing movie, in movie mode
     movies: MovieState
+    changes: int  # TwinklyDevice's count of our changes when this poll ran
 
 
 class TwinklyDevice:
@@ -124,6 +126,8 @@ class TwinklyDevice:
         # Set from a live paint until its commit runs under the lock or a command drops it
         self._cancel_commit: CALLBACK_TYPE | None = None
         self._closed = False  # shut down: no timer may start again
+        # How often we changed what plays; a poll older than our last change is stale
+        self._changes = 0
         self._debouncer = Debouncer(
             hass,
             _LOGGER,
@@ -156,13 +160,43 @@ class TwinklyDevice:
                 effects_count=(await self.client.get_effects())["effects_number"],
                 current_movie=current,
                 movies=movies,
+                changes=self._changes,
             )
 
-    async def async_show_canvas(self, canvas: Canvas, active: Active) -> None:
-        """Store the canvas, then show it as a 1-frame movie of ours."""
+    def playing(self, state: DeviceState) -> Active:
+        """What plays: the polled mode first, store.active where the poll cannot tell.
+
+        It cannot tell in rt and off, for our own movies, and once we changed what plays
+        after it ran.
+        """
+        if state.changes == self._changes:
+            if state.mode == "effect":
+                return Active("builtin", str(state.effect_id))
+            if state.mode in ("playlist", "color", "demo"):
+                return Active("device_mode", state.mode)
+            movie = state.current_movie  # set in movie mode only
+            if movie and movie.unique_id not in self.store.our_movies:
+                return Active("app_movie", movie.unique_id)
+        return self.store.active
+
+    async def async_show_canvas(
+        self, canvas: Canvas, active: Active, keep_painting: bool = False
+    ) -> None:
+        """Store the canvas, then show it as a 1-frame movie of ours.
+
+        keep_painting: an unsaved painting it replaces becomes the look PREVIOUS_PAINTING.
+        """
         self._cancel_preview()
         async with self._command():
+            if keep_painting:
+                self._keep_painting()
             await self._show_canvas(canvas, active)
+
+    async def async_show_painting(self) -> None:
+        """Show the canvas as it is once the lock is ours (strokes made meanwhile too)."""
+        self._cancel_preview()
+        async with self._command():
+            await self._show_canvas(self.store.canvas, Active("painted", None))
 
     async def async_play_effect(
         self, spec: EffectSpec, base: Canvas, active: Active
@@ -184,13 +218,16 @@ class TwinklyDevice:
         )
 
     async def async_commit_now(self) -> None:
-        """Store the painting (the canvas) right away, unless our last upload showed it.
+        """Show the painting (the canvas) right away, uploading it unless we already did.
 
         Painting with live off only changes the stored canvas.
         """
         async with self._command():  # the canvas as it is once the lock is ours
             if self._cancel_preview() or self.store.canvas.pixels != self._uploaded:
                 await self._show_canvas(self.store.canvas, Active("painted", None))
+            else:  # our movie of it plays again (restore uploads it if it is gone)
+                self.store.active = Active("painted", None)
+                await self._restore()
 
     async def async_find(self, indices: list[int]) -> None:
         """Blink the LEDs at indices, the others dimmed, then show what was shown before."""
@@ -354,16 +391,34 @@ class TwinklyDevice:
         )
         self.store.current_movie_uid = None  # set again once the upload worked
         await self._upload(frames, self.fps)
-        self._uploaded = list(base.pixels)
+        self._uploaded = None  # a loop, not the canvas standing still
         self.store.active = active
 
     async def _show_look(self, look: Look) -> None:
+        # Showing the slot over an unsaved painting swaps the two: its canvas is unsaved now
+        if self._keep_painting() and look.name.lower() == PREVIOUS_PAINTING.lower():
+            await self._show_canvas(look.canvas, Active("painted", None))
+            return
         active = Active("look", look.name)
         if look.effect is None:
             await self._show_canvas(look.canvas, active)
         else:
             self.store.set_canvas(look.canvas)
             await self._play_effect(look.effect, look.canvas, active)
+
+    def _keep_painting(self) -> bool:
+        """Before a look or a colour replaces the canvas: keep an unsaved painting.
+
+        That is a canvas of two colours or more that no look holds (a moving look: its
+        canvas). It becomes the look PREVIOUS_PAINTING, replacing the one before.
+        """
+        canvas = self.store.canvas
+        if canvas.uniform_color() is not None or any(
+            look.canvas.pixels == canvas.pixels for look in self.store.looks.values()
+        ):
+            return False
+        self.store.save_look(Look(PREVIOUS_PAINTING, canvas, None))
+        return True
 
     async def _restore(self) -> None:
         active = self.store.active
@@ -487,6 +542,7 @@ class TwinklyDevice:
 
         A login since our last frame (another client took the token) may have ended rt.
         """
+        self._changes += 1
         now, epoch = self.hass.loop.time(), self.client.token_epoch
         if now >= self._rt_until or epoch != self._rt_epoch:
             await self.client.set_mode("rt")
@@ -496,4 +552,5 @@ class TwinklyDevice:
 
     async def _set_mode(self, mode: str) -> None:
         self._rt_until = 0.0  # any other mode ends rt
+        self._changes += 1
         await self.client.set_mode(mode)

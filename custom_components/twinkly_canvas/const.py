@@ -31,3 +31,5 @@ EFFECT_CUSTOM = "Custom effect"
 PREFIX_LOOK = "Look: "
 PREFIX_BUILTIN = "Built-in "
 PREFIX_APP = "App: "
+# The look that keeps an unsaved painting when a look or a colour replaces it
+PREVIOUS_PAINTING = "Previous painting"

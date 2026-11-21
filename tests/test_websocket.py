@@ -111,7 +111,7 @@ async def test_state(
             "max_movies": 55,
             "stranded": 0,
         },
-        "active": {"type": "painted", "ref": None},
+        "active": {"type": "builtin", "ref": "0"},  # what the device plays
         "mode": "effect",
         "colors": {name: list(color) for name, color in NAMED_COLORS.items()},
         "effects": list(EFFECT_KINDS),
@@ -484,12 +484,35 @@ async def test_look_lifecycle(
     assert list(store.looks) == ["Dark"]
 
 
+async def test_active_reads_the_device_first(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    """What plays comes from the device; only HA's own content can become a look."""
+    coordinator = entry.runtime_data.coordinator
+    fake.effect_id = 2  # the app picks another effect behind HA's back
+    await coordinator.async_request_refresh()  # a poll; the next one waits 10 s
+    assert (await _ok(ws, "state"))["active"] == {"type": "builtin", "ref": "2"}
+    error = await _error(ws, "look/save", name="Now")
+    assert error["message"].startswith("A look can be saved from a painting")
+
+    await _ok(ws, "paint", leds=[0], color=list(RED), live=False)
+    await _ok(ws, "commit")
+    assert coordinator.data.mode == "effect"  # the last poll is older than the commit
+    assert (await _ok(ws, "state"))["active"] == {"type": "painted", "ref": None}
+    await _ok(ws, "look/save", name="Now")
+    assert entry.runtime_data.store.looks["Now"].canvas.pixels[:2] == [RED, OFF]
+
+
 async def test_look_commands_ignore_case(
     hass: HomeAssistant,
     entry: MockConfigEntry,
     ws: MockHAClientWebSocket,
 ) -> None:
     store = entry.runtime_data.store
+    await _ok(ws, "commit")  # the painting plays: it can become a look
     await _ok(ws, "look/save", name="Gold")
     await _ok(ws, "look/update", name=" GOLD ")  # replaces it under the new spelling
     assert list(store.looks) == ["GOLD"]
