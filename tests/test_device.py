@@ -299,10 +299,6 @@ async def test_commit_leaves_movie_mode_before_deleting(
 async def test_commit_now(
     hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
 ) -> None:
-    calls = len(fake.calls)
-    await device.async_commit_now()  # nothing pending
-    assert len(fake.calls) == calls
-
     canvas = _canvas()
     await device.async_request_preview(canvas)
     await device.async_commit_now()
@@ -310,6 +306,47 @@ async def test_commit_now(
     await _advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit timer was cancelled
     assert fake.rt_frames == [canvas.to_frame("RGBW")]  # only the upload bridge
+    calls = len(fake.calls)
+    await device.async_commit_now()  # nothing changed since
+    assert len(fake.calls) == calls
+
+
+async def test_commit_now_stores_a_changed_canvas(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
+    """Painting with live off changes only the canvas; commit then stores it, once."""
+    await device.async_commit_now()  # after a start, what the lights show is unknown
+    assert fake.playing.data == Canvas(LEDS).to_frame("RGBW")
+    device.store.set_canvas(_canvas(WARM))
+    await device.async_commit_now()
+    assert fake.playing.data == _canvas(WARM).to_frame("RGBW")
+    assert device.store.active == Active("painted", None)
+    device.store.save_look(Look("Moving", _canvas(RED), CHASE))
+    await device.async_apply_look("Moving")
+    calls = len(fake.calls)
+    await device.async_commit_now()  # nothing painted since: the look keeps playing
+    assert len(fake.calls) == calls
+
+
+@pytest.mark.parametrize("drop", ["turn_off", "unload"])
+async def test_dropped_commit_restores_newest_painting(
+    hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly, drop: str
+) -> None:
+    await device.async_show_canvas(_canvas(), Active("painted", None))
+    device.store.set_canvas(_canvas(WARM))  # the card stores the painting, then previews it
+    await device.async_request_preview(device.store.canvas)
+    await _advance(hass, 0.6)
+    if drop == "turn_off":
+        await device.async_turn_off()
+    else:  # HA stops; the next start makes a new device on the same store
+        await device.async_shutdown()
+        device = TwinklyDevice(hass, fake, device.store, device.info)
+    await _advance(hass, 10)
+    assert fake.calls.count("new_movie") == 1  # the commit was dropped
+    await device.async_turn_on()
+    assert fake.playing.data == _canvas(WARM).to_frame("RGBW")
+    own = [m.unique_id.lower() for m in _own(fake, device)]
+    assert own == [device.store.current_movie_uid]  # the older painting was replaced
 
 
 async def test_command_cancels_pending_preview(

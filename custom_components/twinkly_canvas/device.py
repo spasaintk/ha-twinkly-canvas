@@ -24,7 +24,7 @@ from homeassistant.helpers.event import async_call_later
 
 from .api import TwinklyAuthError, TwinklyClient, TwinklyError
 from .canvas import OFF, Canvas
-from .colors import scale
+from .colors import RGBW, scale
 from .const import (
     DEFAULT_MAX_MOVIES,
     DOMAIN,
@@ -116,6 +116,8 @@ class TwinklyDevice:
         self._lock = asyncio.Lock()
         self._rt_until = 0.0  # loop time until which our last real-time frame holds rt mode
         self._preview = store.canvas
+        # The canvas our last upload showed (an effect: its base); None: unknown after a start
+        self._uploaded: list[RGBW] | None = None
         self._cancel_commit: CALLBACK_TYPE | None = None
         self._debouncer = Debouncer(
             hass,
@@ -173,9 +175,15 @@ class TwinklyDevice:
         )
 
     async def async_commit_now(self) -> None:
-        """Store a pending live preview right away."""
+        """Store the painting right away.
+
+        That is a pending live preview, else the canvas if it changed since our last
+        upload: painting with live off only changes the stored canvas.
+        """
         if self._cancel_commit:
             await self.async_show_canvas(self._preview, Active("painted", None))
+        elif self.store.canvas.pixels != self._uploaded:
+            await self.async_show_canvas(self.store.canvas, Active("painted", None))
 
     async def async_find(self, indices: list[int]) -> None:
         """Blink the LEDs at indices, the others dimmed, then show what was shown before."""
@@ -278,6 +286,8 @@ class TwinklyDevice:
         if self._cancel_commit:
             self._cancel_commit()
             self._cancel_commit = None
+            # our movie is older than the painting: restore uploads the canvas instead
+            self.store.current_movie_uid = None
 
     async def _async_send_preview(self) -> None:
         async with self._lock:
@@ -296,6 +306,7 @@ class TwinklyDevice:
     async def _show_canvas(self, canvas: Canvas, active: Active) -> None:
         self.store.set_canvas(canvas)
         await self._upload([canvas.to_frame(self.info.profile)], self.fps)
+        self._uploaded = list(canvas.pixels)
         self.store.active = active
 
     async def _play_effect(self, spec: EffectSpec, base: Canvas, active: Active) -> None:
@@ -303,6 +314,7 @@ class TwinklyDevice:
             render, spec, base, self.fps, self.info.profile, MAX_FRAMES_PER_MOVIE
         )
         await self._upload(frames, self.fps)
+        self._uploaded = list(base.pixels)
         self.store.active = active
 
     async def _show_look(self, look: Look) -> None:
