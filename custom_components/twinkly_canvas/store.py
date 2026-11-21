@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from dataclasses import asdict, dataclass
 import logging
 from typing import Any
@@ -80,21 +79,6 @@ def _look_name(name: str) -> str:
     return name
 
 
-def _fitted(led_count: int, data: str) -> tuple[Canvas, bool]:
-    """A stored canvas cut, or padded with off, to led_count; True when its size differed.
-
-    Products sold with extension kits can report another LED count after an extension.
-    """
-    raw = base64.b64decode(data)
-    size = led_count * 4
-    fit = raw[:size].ljust(size, b"\0")  # zero bytes are off
-    canvas = Canvas(
-        led_count,
-        [tuple(fit[i : i + 4]) for i in range(0, size, 4)],  # type: ignore[misc]
-    )
-    return canvas, len(raw) != size
-
-
 class CanvasStore:
     """State of one device; every change is saved 1 s later.
 
@@ -117,14 +101,15 @@ class CanvasStore:
         self._movie_counter = 0
 
     async def async_load(self) -> None:
+        """Stored canvases of another LED count are fitted: extension kits change it."""
         if (data := await self._store.async_load()) is None:
             return
-        self._canvas, fitted = _fitted(self.led_count, data["canvas"])
+        self._canvas, fitted = Canvas.from_b64_fitted(self.led_count, data["canvas"])
         self._custom_effect, effect_fitted = _effect(data["custom_effect"], self.led_count)
         fitted |= effect_fitted
         self.looks = {}
         for name, look in data["looks"].items():
-            canvas, canvas_fitted = _fitted(self.led_count, look["canvas"])
+            canvas, canvas_fitted = Canvas.from_b64_fitted(self.led_count, look["canvas"])
             effect, effect_fitted = _effect(look["effect"], self.led_count)
             fitted |= canvas_fitted or effect_fitted
             self.looks[name] = Look(name, canvas, effect)
@@ -156,36 +141,53 @@ class CanvasStore:
         self._save()
 
     def delete_group(self, name: str) -> None:
-        self._pop_group(name)
+        """Delete a group, matched ignoring case; KeyError when none matches."""
+        if not self._pop_group(name):
+            raise KeyError(name)
         self._save()
 
-    def _pop_group(self, name: str) -> None:
+    def _pop_group(self, name: str) -> bool:
         key = " ".join(name.split()).lower()
-        for existing in [k for k in self.groups if k.lower() == key]:
+        matches = [k for k in self.groups if k.lower() == key]
+        for existing in matches:
             del self.groups[existing]
+        return bool(matches)
+
+    def find_look(self, name: str) -> Look | None:
+        """The look of this name, ignoring case and surrounding whitespace."""
+        key = name.strip().lower()
+        return next((look for n, look in self.looks.items() if n.lower() == key), None)
 
     def save_look(self, look: Look) -> None:
+        """Save or replace a look; names are unique ignoring case, the new spelling wins."""
         name = _look_name(look.name)
+        if (old := self.find_look(name)) and old.name != name:
+            del self.looks[old.name]
+            if self._active == Active("look", old.name):
+                self._active = Active("look", name)
         self.looks[name] = Look(name, look.canvas.copy(), look.effect)
         self._save()
 
     def rename_look(self, old: str, new: str) -> None:
-        look = self.looks[old]
+        """KeyError for an unknown look; ValueError when another look has the new name."""
+        if (look := self.find_look(old)) is None:
+            raise KeyError(old)
         new = _look_name(new)
-        if new == old:
+        if new == look.name:
             return
-        if new in self.looks:
+        if (other := self.find_look(new)) and other is not look:
             raise ValueError(f"A look named {new!r} already exists")
-        del self.looks[old]
+        del self.looks[look.name]
         self.looks[new] = Look(new, look.canvas, look.effect)
-        if self._active == Active("look", old):
+        if self._active == Active("look", look.name):
             self._active = Active("look", new)
         self._save()
 
     def delete_look(self, name: str) -> None:
-        self.looks.pop(name, None)
-        if self._active == Active("look", name):
-            self._active = Active("painted", None)
+        if look := self.find_look(name):
+            del self.looks[look.name]
+            if self._active == Active("look", look.name):
+                self._active = Active("painted", None)
         self._save()
 
     @property

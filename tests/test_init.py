@@ -1,19 +1,18 @@
 """Tests for setup, unload, removal and the core twinkly repair issue."""
 
-from datetime import timedelta
+from unittest.mock import AsyncMock
 
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
     issue_registry as ir,
 )
-from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
     MockModule,
-    async_fire_time_changed,
     mock_integration,
 )
 
@@ -21,15 +20,9 @@ from custom_components.twinkly_canvas.canvas import Canvas
 from custom_components.twinkly_canvas.const import DOMAIN
 from custom_components.twinkly_canvas.store import CanvasStore
 
-from .fake_device import GESTALT, FakeTwinkly
+from .fake_device import GESTALT, FakeTwinkly, advance
 
 MAC = GESTALT["mac"]
-
-
-async def _advance(hass: HomeAssistant, seconds: float) -> None:
-    """Run the timers due within the next seconds."""
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
-    await hass.async_block_till_done()
 
 
 async def test_setup_and_unload(
@@ -65,7 +58,7 @@ async def test_unload_cancels_pending_commit(
     movies = len(fake.movies)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert len(fake.movies) == movies
     assert fake.rt_frames == []  # the debounced preview frame never went out either
 
@@ -86,13 +79,30 @@ async def test_setup_retries_when_unreachable(
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
+@pytest.mark.parametrize(
+    "gestalt",
+    [
+        {k: v for k, v in GESTALT.items() if k != "number_of_led"},  # KeyError
+        {**GESTALT, "mac": None},  # TypeError
+    ],
+)
+async def test_setup_fails_on_unreadable_gestalt(
+    hass: HomeAssistant, config_entry: MockConfigEntry, fake: FakeTwinkly, gestalt: dict
+) -> None:
+    fake.gestalt = AsyncMock(return_value=gestalt)  # type: ignore[method-assign]
+    assert not await hass.config_entries.async_setup(config_entry.entry_id)
+    assert config_entry.state is ConfigEntryState.SETUP_ERROR
+    assert config_entry.error_reason_translation_key == "unsupported_device"
+    assert config_entry.reason.startswith("Twinkly Canvas cannot read")
+
+
 async def test_core_twinkly_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     fake: FakeTwinkly,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    core = MockConfigEntry(domain="twinkly", unique_id=MAC)
+    core = MockConfigEntry(domain="twinkly", unique_id="AA-BB-CC-00-11-22")  # same device
     core.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     issue_id = f"core_twinkly_conflict_{config_entry.entry_id}"
@@ -109,11 +119,25 @@ async def test_core_twinkly_issue(
     assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
 
 
+async def test_disabled_core_twinkly_raises_no_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    issue_registry: ir.IssueRegistry,
+) -> None:
+    MockConfigEntry(
+        domain="twinkly", unique_id=MAC, disabled_by=ConfigEntryDisabler.USER
+    ).add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    issue_id = f"core_twinkly_conflict_{config_entry.entry_id}"
+    assert issue_registry.async_get_issue(DOMAIN, issue_id) is None
+
+
 async def test_remove_entry_deletes_store(
     hass: HomeAssistant, entry: MockConfigEntry, hass_storage: dict
 ) -> None:
     entry.runtime_data.store.save_group("Top", "1-10")
-    await _advance(hass, 2)  # the store saves 1 s after a change
+    await advance(hass, 2)  # the store saves 1 s after a change
     key = f"{DOMAIN}.{entry.entry_id}"
     assert hass_storage[key]["data"]["groups"] == {"Top": "1-10"}
 

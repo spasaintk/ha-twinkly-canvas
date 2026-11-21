@@ -26,7 +26,7 @@ from custom_components.twinkly_canvas.effects import EffectSpec, loop_length, re
 from custom_components.twinkly_canvas.movies import MovieState, stranded
 from custom_components.twinkly_canvas.store import Active, CanvasStore, Look
 
-from .fake_device import GESTALT, FakeMovie, FakeTwinkly
+from .fake_device import GESTALT, FakeMovie, FakeTwinkly, advance
 
 LEDS = 400
 RED = (255, 0, 0, 0)
@@ -62,12 +62,6 @@ def _canvas(color: tuple = RED, leds: range = range(10)) -> Canvas:
 def _own(fake: FakeTwinkly, device: TwinklyDevice) -> list[FakeMovie]:
     """Movies on the fake that the integration recorded as its own."""
     return [m for m in fake.movies if m.unique_id.lower() in device.store.our_movies]
-
-
-async def _advance(hass: HomeAssistant, seconds: float) -> None:
-    """Run the timers due within the next seconds; not cumulative, the clock stays."""
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
-    await hass.async_block_till_done()
 
 
 async def _while_time_passes(hass: HomeAssistant, coro: Coroutine[Any, Any, None]) -> None:
@@ -280,11 +274,11 @@ async def test_preview_then_commit(
     canvas = _canvas()
     await _paint_live(device, canvas)
     assert fake.rt_frames == []
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     assert fake.mode == "rt"
     assert fake.rt_frames == [canvas.to_frame("RGBW")]
     assert len(fake.movies) == 7
-    await _advance(hass, 3)
+    await advance(hass, 3)
     assert fake.playing.frames == 1
     assert fake.playing.data == canvas.to_frame("RGBW")
     assert device.store.active == Active("painted", None)
@@ -317,9 +311,9 @@ async def test_commit_leaves_movie_mode_before_deleting(
     """The app plays our movie again during a preview; the commit still replaces it."""
     await device.async_show_canvas(_canvas(), Active("painted", None))
     await _paint_live(device, _canvas(WARM))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     await fake.set_mode("movie")
-    await _advance(hass, 3)
+    await advance(hass, 3)
     assert fake.playing.data == _canvas(WARM).to_frame("RGBW")
     assert len(_own(fake, device)) == 1
 
@@ -331,7 +325,7 @@ async def test_commit_now(
     await _paint_live(device, canvas)
     await device.async_commit_now()
     assert fake.playing.data == canvas.to_frame("RGBW")
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit timer was cancelled
     assert fake.rt_frames == [canvas.to_frame("RGBW")]  # only the upload bridge
     calls = len(fake.calls)
@@ -362,14 +356,14 @@ async def test_dropped_commit_restores_newest_painting(
 ) -> None:
     await device.async_show_canvas(_canvas(), Active("painted", None))
     await _paint_live(device, _canvas(WARM))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     if drop == "turn_off":
         await device.async_turn_off()
     else:  # HA stops; the next start makes a new device on the same store
         await device.async_shutdown()
         device = TwinklyDevice(hass, fake, device.store, device.info)
         await device.async_turn_off()  # the preview still shows: turning on alone keeps it
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit was dropped
     await device.async_turn_on()
     assert fake.playing.data == _canvas(WARM).to_frame("RGBW")
@@ -382,7 +376,7 @@ async def test_command_cancels_pending_preview(
 ) -> None:
     await _paint_live(device, _canvas())
     await device.async_select_builtin(1)
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert (fake.mode, fake.effect_id) == ("effect", 1)
     assert fake.rt_frames == []
     assert len(fake.movies) == 7
@@ -404,7 +398,7 @@ async def test_command_drops_commit_waiting_behind_it(
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))  # commit waits
     lookup.set()
     await select
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert fake.playing is fake.movies[3]
     assert device.store.active == Active("app_movie", fake.movies[3].unique_id.lower())
     assert (fake.calls.count("new_movie"), fake.rt_frames) == (0, [])
@@ -438,7 +432,7 @@ async def test_commit_behind_find_keeps_strokes_made_meanwhile(
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=0.5))
         await asyncio.sleep(0)
     await hass.async_block_till_done()  # the waiting commit runs
-    await _advance(hass, 10)  # then any later one
+    await advance(hass, 10)  # then any later one
     assert device.store.canvas.pixels[:2] == [RED, WARM]
     assert fake.playing.data == device.store.canvas.to_frame("RGBW")
 
@@ -447,12 +441,12 @@ async def test_preview_enters_rt_again_after_outside_change(
     hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
 ) -> None:
     await _paint_live(device, _canvas())
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     fake.mode = "effect"  # the app ends rt ...
     await device.async_get_state()  # ... and a poll sees it
     calls = len(fake.calls)
     await _paint_live(device, _canvas(WARM))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     assert fake.calls[calls:] == ["set_mode", "send_rt_frame"]
     assert fake.rt_frames[-1] == _canvas(WARM).to_frame("RGBW")
 
@@ -462,13 +456,13 @@ async def test_preview_enters_rt_again_after_another_login(
 ) -> None:
     fake.steal_token_after("send_rt_frame")  # another client logs in after our frame ...
     await _paint_live(device, _canvas())
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     fake.mode = "effect"  # ... and ends rt
     await _paint_live(device, _canvas(WARM))
-    await _advance(hass, 0.6)  # this frame logs in again; the device drops it
+    await advance(hass, 0.6)  # this frame logs in again; the device drops it
     calls = len(fake.calls)
     await _paint_live(device, _canvas(WARM))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     assert fake.calls[calls:] == ["set_mode", "send_rt_frame"]
     assert (fake.mode, fake.dropped_rt_frames) == ("rt", 1)
 
@@ -647,7 +641,7 @@ async def test_shutdown_cancels_timers(
 ) -> None:
     await _paint_live(device, _canvas())
     await device.async_shutdown()
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert fake.rt_frames == []
     assert len(fake.movies) == 7
 
@@ -671,5 +665,5 @@ async def test_no_preview_after_shutdown(
 ) -> None:
     await device.async_shutdown()
     await _paint_live(device, _canvas())
-    await _advance(hass, 5)
+    await advance(hass, 5)
     assert (len(fake.movies), fake.calls.count("send_rt_frame")) == (7, 0)

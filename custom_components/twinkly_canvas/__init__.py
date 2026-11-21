@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.typing import ConfigType
 
 from .api import TwinklyClient, TwinklyError
@@ -45,6 +46,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
             translation_key="update_failed",
             translation_placeholders={"error": str(err)},
         ) from err
+    except (KeyError, TypeError) as err:  # the config flow refuses such a gestalt too
+        raise ConfigEntryError(
+            translation_domain=DOMAIN,
+            translation_key="unsupported_device",
+            translation_placeholders={"error": str(err)},
+        ) from err
     store = CanvasStore(hass, entry.entry_id, info.led_count)
     await store.async_load()
     device = TwinklyDevice(hass, client, store, info)
@@ -68,13 +75,23 @@ async def async_remove_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntr
     await CanvasStore(hass, entry.entry_id, 0).async_remove()
 
 
+def core_twinkly_configured(hass: HomeAssistant, mac: str | None) -> bool:
+    """True while core twinkly has an active entry for the device with this MAC.
+
+    Ignored entries (declined discovery) and disabled ones never log in, so they do not count.
+    """
+    return any(
+        format_mac(e.unique_id or "") == mac
+        for e in hass.config_entries.async_entries(
+            "twinkly", include_ignore=False, include_disabled=False
+        )
+    )
+
+
 def _update_core_twinkly_issue(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> None:
     """Raise a repair issue while core twinkly has an entry for the same device."""
     issue_id = f"core_twinkly_conflict_{entry.entry_id}"
-    if any(
-        e.unique_id == entry.unique_id
-        for e in hass.config_entries.async_entries("twinkly", include_ignore=False)
-    ):
+    if core_twinkly_configured(hass, entry.unique_id):
         ir.async_create_issue(
             hass,
             DOMAIN,

@@ -49,6 +49,28 @@ def test_trailing_comma_dropped():
     assert parse_selection("1-20,", 400) == list(range(20))
 
 
+def test_filter_after_comma_without_space():
+    assert parse_selection("1-20,odd", 400) == parse_selection("1-20 odd", 400)
+    assert parse_selection("1-20,every 3", 400) == [0, 3, 6, 9, 12, 15, 18]
+
+
+def test_group_named_often_parses_once():
+    """Each group parses once per call, however often the text names it."""
+    group = ", ".join(f"{n}-{n + 270}" for n in range(1, 125))
+    assert len(group) >= 1000
+    start = time.perf_counter()
+    assert parse_selection(", ".join(["g"] * 2000), 400, {"g": group}) == list(range(394))
+    assert time.perf_counter() - start < 0.5
+
+
+def test_error_quotes_at_most_40_characters():
+    item = "abcdefghij" * 20
+    with pytest.raises(SelectionError) as err:
+        parse_selection(item, 400)
+    assert len(str(err.value)) < 120
+    assert f"'{item[:40]}...'" in str(err.value)
+
+
 @pytest.mark.parametrize(
     ("spec", "match"),
     [

@@ -1,13 +1,13 @@
 """Tests for the light entity, run against the simulated device."""
 
-from datetime import timedelta
-
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_MODE,
     ATTR_EFFECT,
     ATTR_EFFECT_LIST,
+    ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
+    ATTR_SUPPORTED_COLOR_MODES,
     DOMAIN as LIGHT_DOMAIN,
     ColorMode,
 )
@@ -21,25 +21,18 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.util import dt as dt_util
 import pytest
-from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.twinkly_canvas.canvas import Canvas
 from custom_components.twinkly_canvas.effects import EffectSpec
 from custom_components.twinkly_canvas.store import Look
 
-from .fake_device import FakeTwinkly
+from .fake_device import FakeTwinkly, advance
 
 ENTITY = "light.test_tree"
 BUILTINS = [f"Built-in {n}" for n in range(1, 6)]
 APPS = [f"App: App movie {n}" for n in range(1, 8)]
-
-
-async def _advance(hass: HomeAssistant, seconds: float) -> None:
-    """Run the timers due within the next seconds."""
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
-    await hass.async_block_till_done()
 
 
 async def _turn_on(hass: HomeAssistant, **data) -> None:
@@ -109,6 +102,27 @@ async def test_turn_on_rgbw_fills_canvas(
     assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.RGBW
     assert _attr(hass, ATTR_RGBW_COLOR) == (10, 20, 30, 40)
     assert "App: " + fake.playing.name not in _attr(hass, ATTR_EFFECT_LIST)
+
+
+@pytest.mark.parametrize("fake", ["RGB"], indirect=True)
+async def test_rgb_lights(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    """Lights without a white channel: colours are RGB, white folds into warm white."""
+    store = entry.runtime_data.store
+    assert _attr(hass, ATTR_SUPPORTED_COLOR_MODES) == [ColorMode.RGB]
+    await _turn_on(hass, rgb_color=(10, 20, 30))
+    assert store.canvas.pixels == [(10, 20, 30, 0)] * 400
+    assert fake.playing.data == bytes([10, 20, 30]) * 400
+    assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.RGB
+    assert _attr(hass, ATTR_RGB_COLOR) == (10, 20, 30)
+
+    store.set_canvas(Canvas(400, [(0, 0, 0, 255)] * 400))  # warm white
+    entry.runtime_data.coordinator.async_update_listeners()
+    assert _attr(hass, ATTR_RGB_COLOR) == (255, 180, 107)
+    store.set_canvas(Canvas(400, [(0, 0, 0, 255)] * 399 + [(0, 0, 0, 0)]))
+    entry.runtime_data.coordinator.async_update_listeners()
+    assert _attr(hass, ATTR_RGB_COLOR) is None
 
 
 async def test_turn_on_effect_builtin(
@@ -245,9 +259,9 @@ async def test_unavailable_when_unreachable(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
 ) -> None:
     fake.fail_with_connection_error = True
-    await _advance(hass, 61)
+    await advance(hass, 61)
     assert hass.states.get(ENTITY).state == STATE_UNAVAILABLE
 
     fake.fail_with_connection_error = False
-    await _advance(hass, 61)
+    await advance(hass, 61)
     assert hass.states.get(ENTITY).state == STATE_ON

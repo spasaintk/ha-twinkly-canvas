@@ -1,15 +1,21 @@
 """Tests for the config and reconfigure flow. No test touches a network."""
 
-from unittest.mock import patch
+from collections.abc import AsyncGenerator
+from unittest.mock import AsyncMock, patch
 
-from homeassistant.config_entries import SOURCE_IGNORE, SOURCE_USER
+from homeassistant.config_entries import (
+    SOURCE_IGNORE,
+    SOURCE_USER,
+    ConfigEntryDisabler,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import translation
 import pytest
 from pytest_homeassistant.common import MockConfigEntry, mock_component
 
 from custom_components.twinkly_canvas.api import TwinklyConnectionError, TwinklyResponseError
-from custom_components.twinkly_canvas.const import DOMAIN
+from custom_components.twinkly_canvas.const import DOMAIN, MIN_FIRMWARE
 
 from .fake_device import GESTALT
 
@@ -27,17 +33,25 @@ def _custom_integrations(hass: HomeAssistant, enable_custom_integrations: None) 
 
 
 @pytest.fixture(autouse=True)
-def _no_setup():
-    """The flow tests do not set the entry up."""
-    with patch(
-        "custom_components.twinkly_canvas.async_setup_entry", return_value=True, create=True
-    ) as setup:
+async def _no_setup(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
+    """The flow tests neither set up nor unload the entries they make."""
+    with (
+        patch(
+            "custom_components.twinkly_canvas.async_setup_entry", AsyncMock(return_value=True)
+        ) as setup,
+        patch(
+            "custom_components.twinkly_canvas.async_unload_entry", AsyncMock(return_value=True)
+        ),
+    ):
         yield setup
+        # Unload while mocked: the hass fixture unloads loaded entries only after this.
+        for entry in hass.config_entries.async_loaded_entries(DOMAIN):
+            await hass.config_entries.async_unload(entry.entry_id)
 
 
 async def _start(hass: HomeAssistant, gestalt=None, firmware="2.8.10", error=None):
-    """Run the user step with host HOST against a patched device."""
-    reply = {**GESTALT, **(gestalt or {})}
+    """Run the user step with host HOST against a patched device; None leaves a key out."""
+    reply = {k: v for k, v in {**GESTALT, **(gestalt or {})}.items() if v is not None}
     with (
         patch(f"{CLIENT}.gestalt", return_value=reply, side_effect=error),
         patch(f"{CLIENT}.firmware_version", return_value=firmware),
@@ -74,27 +88,22 @@ async def test_cannot_connect(hass: HomeAssistant, error: Exception) -> None:
 async def test_unsupported_firmware(hass: HomeAssistant) -> None:
     result = await _start(hass, firmware="2.4.0")
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "unsupported_device"
+    assert result["reason"] == "unsupported_firmware"
+    assert result["description_placeholders"] == {"min_firmware": MIN_FIRMWARE}
+    texts = await translation.async_get_translations(hass, "en", "config", [DOMAIN])
+    assert "{min_firmware}" in texts[f"component.{DOMAIN}.config.abort.unsupported_firmware"]
 
 
-async def test_unsupported_profile(hass: HomeAssistant) -> None:
-    result = await _start(hass, gestalt={"led_profile": "AWW"})
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "unsupported_device"
-
-
-async def test_missing_led_info(hass: HomeAssistant) -> None:
-    gestalt = {k: v for k, v in GESTALT.items() if k not in ("led_profile", "bytes_per_led")}
-    with (
-        patch(f"{CLIENT}.gestalt", return_value=gestalt),
-        patch(f"{CLIENT}.firmware_version", return_value="2.8.10"),
-    ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}
-        )
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"host": HOST}
-        )
+@pytest.mark.parametrize(
+    "gestalt",
+    [
+        {"led_profile": "AWW"},  # Gold strings: no colour LEDs
+        {"bytes_per_led": None},  # LED information missing
+        {"led_profile": None, "bytes_per_led": 4},
+    ],
+)
+async def test_unsupported_device(hass: HomeAssistant, gestalt: dict) -> None:
+    result = await _start(hass, gestalt=gestalt)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "unsupported_device"
 
@@ -113,14 +122,18 @@ async def test_already_configured(hass: HomeAssistant) -> None:
 
 
 async def test_core_twinkly_guard(hass: HomeAssistant) -> None:
-    MockConfigEntry(domain="twinkly", unique_id=MAC).add_to_hass(hass)
+    MockConfigEntry(domain="twinkly", unique_id="AA-BB-CC-00-11-22").add_to_hass(hass)
     result = await _start(hass)
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "core_twinkly_configured"
 
 
-async def test_ignored_core_twinkly_does_not_block(hass: HomeAssistant) -> None:
-    MockConfigEntry(domain="twinkly", unique_id=MAC, source=SOURCE_IGNORE).add_to_hass(hass)
+@pytest.mark.parametrize(
+    "core",
+    [{"source": SOURCE_IGNORE}, {"disabled_by": ConfigEntryDisabler.USER}],
+)
+async def test_inactive_core_twinkly_does_not_block(hass: HomeAssistant, core: dict) -> None:
+    MockConfigEntry(domain="twinkly", unique_id=MAC, **core).add_to_hass(hass)
     result = await _start(hass)
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
@@ -156,6 +169,7 @@ async def _reconfigure(hass: HomeAssistant, gestalt=None):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], {"host": NEW_HOST}
         )
+    await hass.async_block_till_done()  # the reload a reconfigure starts
     return entry, result
 
 

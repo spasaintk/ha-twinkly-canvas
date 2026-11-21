@@ -213,6 +213,46 @@ async def test_look_names(hass: HomeAssistant, hass_storage: dict[str, Any]) -> 
         store.rename_look("Missing", "Other")
 
 
+async def test_look_names_unique_ignoring_case(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = await _load(hass)
+    store.save_look(Look("Xmas", Canvas(LEDS, [RED] * LEDS), None))
+    store.active = Active("look", "Xmas")
+    store.save_look(Look("XMAS", Canvas(LEDS), None))  # replaces it under the new spelling
+    assert list(store.looks) == ["XMAS"]
+    assert store.looks["XMAS"].canvas.pixels == [OFF] * LEDS
+    assert store.active == Active("look", "XMAS")
+    assert store.find_look(" xmas ") is store.looks["XMAS"]
+    assert store.find_look("Missing") is None
+
+    store.save_look(Look("A", Canvas(LEDS), None))
+    store.save_look(Look("B", Canvas(LEDS), None))
+    with pytest.raises(ValueError):
+        store.rename_look("A", "b")
+    store.rename_look("A", "a")  # only the case of the same look changes
+    store.rename_look(" B ", "C")  # the old name matches ignoring case and whitespace
+    assert sorted(store.looks) == ["C", "XMAS", "a"]
+
+    store.delete_look(" xmas ")
+    assert sorted(store.looks) == ["C", "a"]
+    assert store.active == Active("painted", None)
+
+
+async def test_delete_unknown_group(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = await _load(hass)
+    store.save_group("Corners", "1, 4")
+    with (
+        patch.object(store._store, "async_delay_save") as delay_save,
+        pytest.raises(KeyError),
+    ):
+        store.delete_group("Edges")
+    delay_save.assert_not_called()
+    assert store.groups == {"Corners": "1, 4"}
+
+
 async def test_delete_active_look(
     hass: HomeAssistant, hass_storage: dict[str, Any]
 ) -> None:

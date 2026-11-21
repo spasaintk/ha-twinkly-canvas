@@ -4,16 +4,23 @@ It follows the behaviour measured on a real device: movie storage costs frames p
 MOVIE_OVERHEAD_FRAMES per movie, only the last movie can be deleted (and not while it
 plays), unique_ids are listed upper-cased and DELETE needs the id exactly as listed,
 and creating a movie changes neither the mode nor the current movie.
+
+advance() is the clock helper the tests share.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 import functools
 import re
 from typing import Any
 import uuid
+
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.twinkly_canvas.api import (
     TwinklyConnectionError,
@@ -25,7 +32,6 @@ from custom_components.twinkly_canvas.const import (
 )
 
 LEDS = 400
-FRAME_BYTES = LEDS * 4  # RGBW
 EFFECTS = 5
 APP_MOVIE_FRAMES = (59, 8, 60, 116, 61, 32, 48)
 MODES = ("off", "color", "demo", "effect", "movie", "playlist", "rt")
@@ -45,6 +51,12 @@ GESTALT = {
     "compatibility_mode": "enabled",
     "code": 1000,
 }
+
+
+async def advance(hass: HomeAssistant, seconds: float) -> None:
+    """Run the timers due within the next seconds; not cumulative, the clock stays."""
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
+    await hass.async_block_till_done()
 
 
 @dataclass(eq=False)
@@ -81,7 +93,9 @@ def _device_call(auth: bool = True) -> Callable[[Callable], Callable]:
 class FakeTwinkly:
     """One simulated device: modes, 5 effects, stored movies, brightness, real-time frames."""
 
-    def __init__(self) -> None:
+    def __init__(self, profile: str = "RGBW") -> None:
+        self.profile = profile  # "RGB": lights without a white channel
+        self.frame_bytes = LEDS * len(profile)  # one byte per channel
         self.mode = "effect"
         self.effect_id = 0
         self.brightness = 100
@@ -111,7 +125,7 @@ class FakeTwinkly:
     def add_app_movie(self, name: str, frames: int) -> FakeMovie:
         """A movie stored by the Twinkly app, appended to the list."""
         movie = FakeMovie(
-            name, str(uuid.uuid4()).upper(), frames, 11, bytes(frames * FRAME_BYTES)
+            name, str(uuid.uuid4()).upper(), frames, 11, bytes(frames * self.frame_bytes)
         )
         self.movies.append(movie)
         return movie
@@ -136,7 +150,7 @@ class FakeTwinkly:
 
     @_device_call(auth=False)
     async def gestalt(self) -> dict:
-        return dict(GESTALT)
+        return {**GESTALT, "led_profile": self.profile, "bytes_per_led": len(self.profile)}
 
     @_device_call(auth=False)
     async def firmware_version(self) -> str:
@@ -200,7 +214,7 @@ class FakeTwinkly:
                     "id": i,
                     "name": m.name,
                     "unique_id": m.unique_id,
-                    "descriptor_type": "rgbw_raw",
+                    "descriptor_type": f"{self.profile.lower()}_raw",
                     "leds_per_frame": LEDS,
                     "frames_number": m.frames,
                     "fps": m.fps,
@@ -238,7 +252,7 @@ class FakeTwinkly:
             uuid.UUID(unique_id)
         except ValueError as err:
             raise TwinklyResponseError(412, "unique_id is not a UUID") from err
-        if leds != LEDS or descriptor != "rgbw_raw":
+        if leds != LEDS or descriptor != f"{self.profile.lower()}_raw":
             raise TwinklyResponseError(1101, f"Wrong format {leds} x {descriptor!r}")
         if (
             len(self.movies) >= self.max_movies
@@ -260,7 +274,7 @@ class FakeTwinkly:
             raise TwinklyResponseError(1001, "movies/full without movies/new")
         if self.fail_upload:  # the movie stays half-created, like after a lost token
             raise TwinklyResponseError(1102, "Upload failed")
-        if len(data) != movie.frames * FRAME_BYTES:
+        if len(data) != movie.frames * self.frame_bytes:
             raise TwinklyResponseError(1106, "Frame data does not match frames_number")
         movie.data = data
         return {"frames_number": movie.frames, "code": 1000}
@@ -280,7 +294,7 @@ class FakeTwinkly:
 
     @_device_call()
     async def send_rt_frame(self, data: bytes) -> None:
-        if len(data) != FRAME_BYTES:
+        if len(data) != self.frame_bytes:
             raise TwinklyResponseError(1106, "Wrong frame size")
         if self.mode == "rt":
             self.rt_frames.append(data)

@@ -7,9 +7,9 @@ from typing import Any
 from awesomeversion import AwesomeVersion
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.device_registry import format_mac
 import voluptuous as vol
 
+from . import core_twinkly_configured
 from .api import TwinklyClient, TwinklyError
 from .const import CONF_HOST, DOMAIN, MIN_FIRMWARE
 from .device import DeviceInfoData
@@ -45,6 +45,12 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
             except TwinklyError:  # a wrong host may answer 404, junk or 401, not only time out
                 errors["base"] = "cannot_connect"
             else:
+                # First: an older firmware may also be what leaves out the LED information.
+                if AwesomeVersion(firmware) < AwesomeVersion(MIN_FIRMWARE):
+                    return self.async_abort(
+                        reason="unsupported_firmware",
+                        description_placeholders={"min_firmware": MIN_FIRMWARE},
+                    )
                 try:
                     info = DeviceInfoData.from_api(gestalt, firmware, None)
                 except (KeyError, TypeError):  # setup would fail on the same gestalt
@@ -73,16 +79,10 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
     def _check(self, gestalt: dict, info: DeviceInfoData) -> str | None:
         """The abort reason if this device cannot be used, else None."""
         # colors.to_wire supports only RGB and RGBW (not the Gold AWW strings)
-        if info.profile not in ("RGB", "RGBW") or AwesomeVersion(
-            info.firmware
-        ) < AwesomeVersion(MIN_FIRMWARE):
+        if info.profile not in ("RGB", "RGBW"):
             return "unsupported_device"
         if gestalt.get("compatibility_mode") == "disabled":
             return "compatibility_mode_off"
-        # ignored entries (declined discovery) are not a configured core integration
-        if any(
-            e.unique_id == info.mac
-            for e in self.hass.config_entries.async_entries("twinkly", include_ignore=False)
-        ):
+        if core_twinkly_configured(self.hass, info.mac):
             return "core_twinkly_configured"
         return None

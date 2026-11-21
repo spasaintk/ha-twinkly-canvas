@@ -10,8 +10,9 @@ import re
 
 GROUP_NAME_MAX = 40
 
-_FILTER = re.compile(
-    r"\s+(odd|even|every\s+([0-9]{1,6})(?:\s+from\s+([0-9]{1,6}))?)\s*$", re.IGNORECASE
+_FILTER = re.compile(  # after a space or a comma: "1-20 odd", "1-20,odd"
+    r"[\s,]\s*(odd|even|every\s+([0-9]{1,6})(?:\s+from\s+([0-9]{1,6}))?)\s*$",
+    re.IGNORECASE,
 )
 
 
@@ -23,11 +24,18 @@ def _number(text: str, led_count: int) -> int:
     if not text:
         raise SelectionError("Empty item: check for a stray comma or dash")
     if not re.fullmatch(r"[0-9]{1,6}", text):
-        raise SelectionError(f"'{text}' is not an LED number, range, 'all' or group")
+        shown = text if len(text) <= 40 else f"{text[:40]}..."
+        raise SelectionError(f"'{shown}' is not an LED number, range, 'all' or group")
     n = int(text)
-    if not 1 <= n <= led_count:
-        raise SelectionError(f"LED {n} is outside 1-{led_count}")
+    check_leds((n - 1,), led_count)
     return n
+
+
+def check_leds(indices: Iterable[int], led_count: int) -> None:
+    """Refuse 0-based indices outside the LEDs, naming them 1-based like a selection."""
+    for i in indices:
+        if not 0 <= i < led_count:
+            raise SelectionError(f"LED {i + 1} is outside 1-{led_count}")
 
 
 def parse_selection(
@@ -39,17 +47,17 @@ def parse_selection(
         raise SelectionError("Selection text is too long")
     if not spec:
         raise SelectionError("Selection is empty")
-    flt = _FILTER.search(spec)
-    if flt:
-        spec = spec[: flt.start()]
-    spec = spec.removesuffix(",")  # "1-20," and "1-20, odd"
+    flt = _FILTER.search(spec)  # its match takes the comma of "1-20, odd" along
+    spec = spec[: flt.start()] if flt else spec.removesuffix(",")  # "1-20,"
     lowered = {k.lower(): v for k, v in (groups or {}).items()}
     chosen: set[int] = set()  # 1-based numbers
-    for part in (p.strip() for p in spec.split(",")):
-        if part.lower() == "all":
+    # Each item once, ignoring case: a group named a thousand times parses once.
+    items = {p.strip().lower(): p.strip() for p in spec.split(",")}
+    for key, part in items.items():
+        if key == "all":
             chosen.update(range(1, led_count + 1))
-        elif part.lower() in lowered:
-            chosen.update(i + 1 for i in parse_selection(lowered[part.lower()], led_count))
+        elif key in lowered:
+            chosen.update(i + 1 for i in parse_selection(lowered[key], led_count))
         elif "-" in part:
             a, _, b = part.partition("-")
             lo, hi = sorted((_number(a.strip(), led_count), _number(b.strip(), led_count)))

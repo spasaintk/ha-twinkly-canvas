@@ -19,7 +19,8 @@
     },
     "abort": {
       "already_configured": "These lights are already set up.",
-      "unsupported_device": "These lights are not supported: they need firmware 2.5.6 or newer and RGB or RGBW LEDs.",
+      "unsupported_firmware": "These lights need firmware {min_firmware} or newer. Update them in the Twinkly app and try again.",
+      "unsupported_device": "These lights are not supported: Twinkly Canvas works only with lights that report RGB or RGBW LEDs.",
       "compatibility_mode_off": "Compatibility mode is turned off on these lights. Turn it on in the Twinkly app and try again.",
       "core_twinkly_configured": "These lights are already set up with Home Assistant's built-in Twinkly integration. Both integrations would keep logging each other out of the lights, so remove the built-in Twinkly entry first.",
       "unique_id_mismatch": "This host belongs to a different device than the one you are reconfiguring.",
@@ -31,10 +32,12 @@
     "too_many_movies": { "message": "The lights hold as many movies as they can store. Delete a movie you no longer need in the Twinkly app and try again." },
     "device_error": { "message": "The Twinkly lights could not carry out the command: {error}" },
     "update_failed": { "message": "Could not read the state of the Twinkly lights: {error}" },
+    "unsupported_device": { "message": "Twinkly Canvas cannot read the device information of these lights: {error}" },
     "unknown_look": { "message": "There is no look named \"{name}\"." },
+    "unknown_group": { "message": "There is no group named \"{name}\"." },
     "unknown_effect": { "message": "These lights have no effect \"{effect}\"." },
     "invalid_selection": { "message": "Invalid LED selection: {error}" },
-    "invalid_color": { "message": "Invalid colour. Use an RGB colour with values from 0 to 255 or a colour name such as red, and give exactly one colour to set LEDs." },
+    "invalid_color": { "message": "Invalid colour: {error}" },
     "invalid_name": { "message": "Invalid name: {error}" },
     "cannot_save_look": { "message": "A look can be saved from a painting, the custom effect or another look, not from a built-in effect or a movie from the Twinkly app." }
   },

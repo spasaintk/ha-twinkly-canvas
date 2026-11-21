@@ -23,19 +23,21 @@ async def async_get_config_entry_diagnostics(
     """Entry data, device info and state, plus store counts only."""
     data = entry.runtime_data
     store = data.store
-    state = data.coordinator.data
+    movies = data.coordinator.data.movies
+    state = asdict(data.coordinator.data)
+    # async_redact_data does not descend into tuples, so the movies become a list
+    state["movies"]["movies"] = list(state["movies"]["movies"])
     return async_redact_data(
         {
             "entry": dict(entry.data),
             "gestalt": asdict(data.info),
-            # async_redact_data does not descend into tuples, so the movies become a list
-            "state": asdict(state)
-            | {"movies": asdict(state.movies) | {"movies": [asdict(m) for m in state.movies.movies]}},
+            "state": state,
+            "last_update_success": data.coordinator.last_update_success,
             "store": {
                 "groups": len(store.groups),
                 "looks": len(store.looks),
                 "our_movies": len(store.our_movies),
-                "stranded": stranded(state.movies, set(store.our_movies)),
+                "stranded": stranded(movies, set(store.our_movies)),
             },
         },
         TO_REDACT,

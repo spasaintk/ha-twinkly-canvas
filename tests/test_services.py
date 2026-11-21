@@ -93,7 +93,10 @@ async def test_set_leds_needs_one_color(
     ):
         err = await _refused(hass, "set_leds", leds="1-3", **colors)
         assert err.translation_key == "invalid_color", colors
-    assert str(err).startswith("Invalid colour. Use an RGB colour")
+        assert err.translation_placeholders["error"], colors
+        assert str(err).startswith("Invalid colour: "), colors
+    err = await _refused(hass, "set_leds", leds="1-3", color_name="chartreuse")
+    assert "chartreuse" in str(err)
     assert fake.calls[calls:] == []
 
 
@@ -108,9 +111,10 @@ async def test_play_effect_service(
         colors=["red", [192, 192, 192]],
         leds="1-20",
         speed=100,
+        keep_others=False,
     )
     assert store.custom_effect == EffectSpec(
-        "chase", tuple(range(20)), (RED, SILVER), speed=1.0
+        "chase", tuple(range(20)), (RED, SILVER), speed=1.0, keep_others=False
     )
     assert store.custom_effect.kind == "chase"
     assert fake.playing.frames > 1
@@ -160,6 +164,21 @@ async def test_save_and_apply_look(
     err = await _refused(hass, "save_look", name=" ")
     assert err.translation_key == "invalid_name"
     assert str(err) == "Invalid name: A look name needs 1 to 40 characters"
+
+
+async def test_look_names_ignore_case(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    store = entry.runtime_data.store
+    await _call(hass, "save_look", name="Xmas")
+    await _call(hass, "set_leds", leds="1-10", color_name="gold")
+    await _call(hass, "save_look", name="XMAS")
+    assert list(store.looks) == ["XMAS"]
+
+    await _call(hass, "set_leds", leds="all", color_name="off")
+    await _call(hass, "apply_look", look=" xmas ")
+    assert fake.playing.data == store.looks["XMAS"].canvas.to_frame("RGBW")
+    assert store.active == Active("look", "XMAS")
 
 
 async def test_save_look_from_effect_or_look(
@@ -217,6 +236,10 @@ async def test_group_services(
     assert store.groups == {}
     err = await _refused(hass, "set_leds", leds="Corners", color_name="red")
     assert err.translation_key == "invalid_selection"
+    err = await _refused(hass, "delete_group", name="Corners")
+    assert err.translation_key == "unknown_group"
+    assert err.translation_placeholders == {"name": "Corners"}
+    assert str(err) == 'There is no group named "Corners"'
 
     err = await _refused(hass, "save_group", name="odd", leds="1-3")
     assert err.translation_key == "invalid_name"
@@ -240,6 +263,7 @@ async def test_action_descriptions(hass: HomeAssistant, entry: MockConfigEntry) 
         assert names[f"{key}.description"]
         for field, spec in description["fields"].items():
             assert names[f"{key}.fields.{field}.name"]
+            assert names[f"{key}.fields.{field}.description"]
             selector.validate_selector(spec["selector"])
 
     selects = {

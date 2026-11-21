@@ -13,9 +13,12 @@ from .fake_device import GESTALT, FakeTwinkly
 
 
 @pytest.fixture
-def fake() -> Generator[FakeTwinkly]:
-    """The simulated device; setup gets it in place of a TwinklyClient."""
-    fake = FakeTwinkly()
+def fake(request: pytest.FixtureRequest) -> Generator[FakeTwinkly]:
+    """The simulated device; setup gets it in place of a TwinklyClient.
+
+    Parametrize it indirectly with "RGB" for lights without a white channel.
+    """
+    fake = FakeTwinkly(getattr(request, "param", "RGBW"))
     with patch("custom_components.twinkly_canvas.TwinklyClient", return_value=fake):
         yield fake
 

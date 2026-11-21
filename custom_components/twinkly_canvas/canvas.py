@@ -51,13 +51,19 @@ class Canvas:
 
     @classmethod
     def from_b64(cls, led_count: int, data: str) -> Canvas:
-        raw = base64.b64decode(data)
-        if len(raw) != led_count * 4:
+        canvas, resized = cls.from_b64_fitted(led_count, data)
+        if resized:
             raise ValueError("Stored canvas does not match the LED count")
-        return cls(
-            led_count,
-            [tuple(raw[i : i + 4]) for i in range(0, len(raw), 4)],  # type: ignore[misc]
-        )
+        return canvas
+
+    @classmethod
+    def from_b64_fitted(cls, led_count: int, data: str) -> tuple[Canvas, bool]:
+        """A stored canvas cut, or padded with off, to led_count; True when its size differed."""
+        raw = base64.b64decode(data)
+        size = led_count * 4
+        fit = raw[:size].ljust(size, b"\0")  # zero bytes are off
+        pixels = [tuple(fit[i : i + 4]) for i in range(0, size, 4)]
+        return cls(led_count, pixels), len(raw) != size  # type: ignore[arg-type]
 
     def uniform_color(self) -> RGBW | None:
         first = self.pixels[0] if self.pixels else None

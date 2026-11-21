@@ -23,7 +23,7 @@ from custom_components.twinkly_canvas.effects import (
 )
 from custom_components.twinkly_canvas.store import Active, Look
 
-from .fake_device import APP_MOVIE_FRAMES, FakeTwinkly
+from .fake_device import APP_MOVIE_FRAMES, FakeTwinkly, advance
 
 ENTITY = "light.test_tree"
 RED = (255, 0, 0, 0)
@@ -68,12 +68,6 @@ async def _error(ws: MockHAClientWebSocket, command: str, **data) -> dict:
     reply = await _send(ws, command, **data)
     assert not reply["success"], reply
     return reply["error"]
-
-
-async def _advance(hass: HomeAssistant, seconds: float) -> None:
-    """Run the timers due within the next seconds."""
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
-    await hass.async_block_till_done()
 
 
 def _painted(canvas: Canvas, color: tuple) -> list[int]:
@@ -146,6 +140,19 @@ async def test_state(
     assert state["mode"] == "movie"
 
 
+@pytest.mark.parametrize("capacity", [0, -1])
+async def test_state_memory_without_capacity(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+    capacity: int,
+) -> None:
+    fake.max_capacity = capacity
+    await entry.runtime_data.coordinator.async_refresh()
+    assert (await _ok(ws, "state"))["memory"]["used_pct"] == 0
+
+
 async def test_paint_live_previews(
     hass: HomeAssistant,
     entry: MockConfigEntry,
@@ -156,10 +163,10 @@ async def test_paint_live_previews(
     assert await _ok(ws, "paint", leds=[0, 2, 4], color=list(RED)) is None
     assert _painted(store.canvas, RED) == [0, 2, 4]
     assert fake.rt_frames == []  # debounced
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     assert fake.mode == "rt"
     assert fake.rt_frames == [store.canvas.to_frame("RGBW")]
-    await _advance(hass, 3)  # painting paused: stored on the lights
+    await advance(hass, 3)  # painting paused: stored on the lights
     assert fake.playing.data == store.canvas.to_frame("RGBW")
     assert store.active == Active("painted", None)
 
@@ -173,7 +180,7 @@ async def test_paint_not_live_then_commit(
     store = entry.runtime_data.store
     await _ok(ws, "paint", leds=list(range(10)), color=list(WARM), live=False)
     assert store.canvas.pixels[:11] == [WARM] * 10 + [OFF]
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert (fake.rt_frames, fake.mode) == ([], "effect")  # nothing reached the lights
 
     assert await _ok(ws, "commit") is None
@@ -195,7 +202,7 @@ async def test_live_then_not_live_then_commit(
 ) -> None:
     store = entry.runtime_data.store
     await _ok(ws, "paint", leds=[0], color=list(RED))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     await _ok(ws, "paint", leds=[1], color=list(WARM), live=False)
     await _ok(ws, "commit")
     assert store.canvas.pixels[:3] == [RED, WARM, OFF]
@@ -210,9 +217,9 @@ async def test_live_then_not_live_then_timer(
 ) -> None:
     store = entry.runtime_data.store
     await _ok(ws, "paint", leds=[0], color=list(RED))
-    await _advance(hass, 0.6)
+    await advance(hass, 0.6)
     await _ok(ws, "paint", leds=[1], color=list(WARM), live=False)
-    await _advance(hass, 3)  # painting paused: stored on the lights
+    await advance(hass, 3)  # painting paused: stored on the lights
     assert store.canvas.pixels[:3] == [RED, WARM, OFF]
     assert fake.playing.data == store.canvas.to_frame("RGBW")
     uploads = fake.calls.count("new_movie")
@@ -278,7 +285,7 @@ async def test_app_movie_refuses_ours(
     assert error == {"code": "invalid_format", "message": 'These lights have no effect "7"'}
     assert fake.calls[calls:] == ["get_movies"]  # looked up, nothing changed
     assert (fake.playing, store.active) == (ours, Active("painted", None))
-    await _advance(hass, 3)  # the pending painting was kept
+    await advance(hass, 3)  # the pending painting was kept
     assert fake.playing.data == store.canvas.to_frame("RGBW")
 
 
@@ -376,7 +383,7 @@ async def test_builtin_and_app_movie(
     assert await _ok(ws, "app_movie", movie_id=3) is None
     assert fake.playing is fake.movies[3]
     assert store.active == Active("app_movie", fake.movies[3].unique_id.lower())
-    await _advance(hass, 10)  # the refresh after a refresh waits for its cooldown
+    await advance(hass, 10)  # the refresh after a refresh waits for its cooldown
     assert _attr(hass, "effect") == "App: App movie 4"
 
     assert (await _error(ws, "builtin", effect_id=5))["code"] == "invalid_format"
@@ -434,6 +441,21 @@ async def test_look_lifecycle(
     assert list(store.looks) == ["Dark"]
 
 
+async def test_look_commands_ignore_case(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    ws: MockHAClientWebSocket,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "look/save", name="Gold")
+    await _ok(ws, "look/update", name=" GOLD ")  # replaces it under the new spelling
+    assert list(store.looks) == ["GOLD"]
+    await _ok(ws, "look/rename", name="gold", new_name="Golden")
+    assert list(store.looks) == ["Golden"]
+    await _ok(ws, "look/delete", name=" golden ")
+    assert store.looks == {}
+
+
 async def test_group_save_and_delete(
     hass: HomeAssistant,
     entry: MockConfigEntry,
@@ -446,6 +468,10 @@ async def test_group_save_and_delete(
 
     assert await _ok(ws, "group/delete", name="Corners") is None
     assert store.groups == {}
+    assert await _error(ws, "group/delete", name="Corners") == {
+        "code": "invalid_format",
+        "message": 'There is no group named "Corners"',
+    }
 
     for name, leds in (("odd", "1-3"), ("Top", "1-401")):
         error = await _error(ws, "group/save", name=name, leds=leds)
@@ -506,8 +532,20 @@ async def test_bad_leds_errors(
         assert error["code"] == "invalid_format", (command, data)
     assert store.canvas.pixels == [OFF] * 400
     assert store.custom_effect is None
-    await _advance(hass, 10)
+    await advance(hass, 10)
     assert fake.calls[calls:] == []  # nothing reached the lights
+
+
+async def test_paint_names_leds_from_1(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    ws: MockHAClientWebSocket,
+) -> None:
+    """The card's 0-based indices are named like LED numbers in a selection."""
+    for leds, message in (([0, 400], "LED 401 is outside 1-400"), ([-1], "LED 0 is outside 1-400")):
+        error = await _error(ws, "paint", leds=leds, color=list(RED))
+        assert error == {"code": "invalid_format", "message": message}
+    assert entry.runtime_data.store.canvas.pixels == [OFF] * 400
 
 
 async def test_device_errors(
@@ -534,6 +572,7 @@ async def test_read_only_user_refused(
     hass_read_only_access_token: str,
 ) -> None:
     ws = await hass_ws_client(hass, hass_read_only_access_token)
+    assert (await _ok(ws, "state"))["led_count"] == 400  # reading needs read permission only
     error = await _error(ws, "paint", leds=[0], color=list(RED))
     assert error["code"] == "unauthorized"
     assert entry.runtime_data.store.canvas.pixels == [OFF] * 400

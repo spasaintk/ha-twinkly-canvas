@@ -21,7 +21,7 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .canvas import Canvas
-from .colors import parse_color
+from .colors import parse_color, to_wire
 from .const import (
     DOMAIN,
     EFFECT_CUSTOM,
@@ -142,6 +142,13 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
             return self.store.canvas.uniform_color()
         return None
 
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        """For RGB lights: the colour they show, W folded in as warm white."""
+        if (color := self.rgbw_color) is None:
+            return None
+        return tuple(to_wire(color, "RGB"))  # type: ignore[return-value]
+
     async def async_turn_on(self, **kwargs: Any) -> None:
         if ATTR_EFFECT in kwargs and kwargs[ATTR_EFFECT] not in self.effect_list:
             raise ServiceValidationError(  # before anything changes, brightness too
@@ -197,7 +204,11 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         """Paint the selected LEDs one colour and show the canvas; white adds to W."""
         if (color is None) == (color_name is None):
             raise ServiceValidationError(
-                translation_domain=DOMAIN, translation_key="invalid_color"
+                translation_domain=DOMAIN,
+                translation_key="invalid_color",
+                translation_placeholders={
+                    "error": "Give exactly one of a colour and a colour name"
+                },
             )
         with _invalid("invalid_color"):
             r, g, b, w = parse_color(color_name if color is None else color)
@@ -237,8 +248,8 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
             look = Look(name, store.canvas, None)
         elif active.type == "custom_effect":
             look = Look(name, store.canvas, store.custom_effect)
-        elif active.type == "look":
-            look = replace(store.looks[active.ref], name=name)  # type: ignore[index]
+        elif active.type == "look" and (current := store.find_look(active.ref or "")):
+            look = replace(current, name=name)
         else:  # a built-in effect or an app movie: there are no frames of ours to keep
             raise ServiceValidationError(
                 translation_domain=DOMAIN, translation_key="cannot_save_look"
@@ -257,7 +268,14 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
             self.store.save_group(name, leds)
 
     async def async_delete_group(self, name: str) -> None:
-        self.store.delete_group(name)
+        try:
+            self.store.delete_group(name)
+        except KeyError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_group",
+                translation_placeholders={"name": name},
+            ) from err
 
     def _selection(self, leds: str) -> list[int]:
         """The 0-based indices of a selection text, which may name groups."""

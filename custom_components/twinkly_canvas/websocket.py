@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Any
 
-from homeassistant.auth.permissions.const import POLICY_CONTROL
+from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components import websocket_api
 from homeassistant.components.light.const import DATA_COMPONENT as LIGHT_ENTITIES
 from homeassistant.core import HomeAssistant, callback
@@ -29,7 +29,7 @@ from .const import DOMAIN, PREFIX_BUILTIN
 from .effects import EFFECT_KINDS, EffectSpec, render
 from .light import TwinklyCanvasLight
 from .movies import stranded
-from .selection import format_selection
+from .selection import check_leds, format_selection
 
 PREVIEW_FRAMES = 120  # the card's preview loop; a movie on the lights takes up to 240
 
@@ -48,9 +48,12 @@ type _Command = Callable[[TwinklyCanvasLight, dict[str, Any]], Awaitable[Any]]
 
 
 def _command(
-    name: str, schema: dict | None = None
+    name: str, schema: dict | None = None, policy: str = POLICY_CONTROL
 ) -> Callable[[_Command], websocket_api.WebSocketCommandHandler]:
-    """A command on one light; its result, or invalid_format / device_error."""
+    """A command on one light; its result, or invalid_format / device_error.
+
+    The user needs the policy's permission on the light: control, or read for state.
+    """
 
     def decorate(func: _Command) -> websocket_api.WebSocketCommandHandler:
         @websocket_api.websocket_command(
@@ -68,7 +71,7 @@ def _command(
         ) -> None:
             entity_id = msg["entity_id"]
             # HA checks this permission for the light's actions; the card must not skip it
-            if not connection.user.permissions.check_entity(entity_id, POLICY_CONTROL):
+            if not connection.user.permissions.check_entity(entity_id, policy):
                 raise Unauthorized(entity_id=entity_id)
             entities = hass.data.get(LIGHT_ENTITIES)
             light = entities.get_entity(entity_id) if entities else None
@@ -106,7 +109,7 @@ def _effect_args(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _require_look(light: TwinklyCanvasLight, name: str) -> None:
-    if name not in light.store.looks:
+    if light.store.find_look(name) is None:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="unknown_look",
@@ -127,7 +130,7 @@ def _preview(spec: EffectSpec, base: Canvas, fps: int) -> list[str]:
     return frames
 
 
-@_command("state")
+@_command("state", policy=POLICY_READ)
 async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, Any]:
     """Everything the card shows; the device part is from the last poll."""
     store, info, state = light.store, light.device.info, light.coordinator.data
@@ -156,7 +159,7 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
             if m.unique_id not in store.our_movies
         ],
         "memory": {
-            "used_pct": 100 * used / movies.max_capacity,
+            "used_pct": 100 * used / movies.max_capacity if movies.max_capacity > 0 else 0,
             "available_frames": movies.available_frames,
             "max_capacity": movies.max_capacity,
             "movies": len(movies.movies),
@@ -180,8 +183,9 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
 )
 async def _paint(light: TwinklyCanvasLight, msg: dict[str, Any]) -> None:
     """Paint LEDs on the canvas; live, the lights show it within a second."""
+    check_leds(msg["leds"], light.store.led_count)  # named from 1, like a selection
     canvas = light.store.canvas.copy()
-    canvas.set(msg["leds"], msg["color"])  # checks every index and the colour
+    canvas.set(msg["leds"], msg["color"])  # checks the colour
     light.store.set_canvas(canvas)
     if msg["live"]:
         await light.device.async_request_preview()

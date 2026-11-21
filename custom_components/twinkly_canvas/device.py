@@ -235,8 +235,8 @@ class TwinklyDevice:
             self.store.active = Active("app_movie", movie.unique_id)
 
     async def async_apply_look(self, name: str) -> None:
-        """Show a saved look; its canvas becomes the canvas."""
-        if (look := self.store.looks.get(name)) is None:
+        """Show a saved look, named ignoring case; its canvas becomes the canvas."""
+        if (look := self.store.find_look(name)) is None:
             raise ServiceValidationError(
                 translation_domain=DOMAIN,
                 translation_key="unknown_look",
@@ -367,8 +367,8 @@ class TwinklyDevice:
         if movie := next((m for m in state.movies if m.unique_id == uid), None):
             await self.client.set_current_movie(movie.id)
             await self._set_mode("movie")
-        elif active.type == "look" and active.ref in self.store.looks:
-            await self._show_look(self.store.looks[active.ref])
+        elif active.type == "look" and (look := self.store.find_look(active.ref or "")):
+            await self._show_look(look)
         elif active.type == "custom_effect" and self.store.custom_effect:
             await self._play_effect(self.store.custom_effect, self.store.canvas, active)
         else:  # the canvas itself, or what was shown is gone
