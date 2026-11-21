@@ -153,8 +153,8 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
         ],
         "custom_effect": store.custom_effect.to_dict() if store.custom_effect else None,
         "builtins": state.effects_count,
-        "app_movies": [
-            {"id": m.id, "name": m.name, "frames": m.frames}
+        "app_movies": [  # unique_id: the card marks the one active.ref names
+            {"id": m.id, "name": m.name, "frames": m.frames, "unique_id": m.unique_id}
             for m in movies.movies
             if m.unique_id not in store.our_movies
         ],

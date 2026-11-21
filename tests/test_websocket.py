@@ -94,8 +94,13 @@ async def test_state(
         "looks": [],
         "custom_effect": None,
         "builtins": 5,
-        "app_movies": [
-            {"id": i, "name": f"App movie {i + 1}", "frames": frames}
+        "app_movies": [  # unique_id lower-cased, like active.ref of an app movie
+            {
+                "id": i,
+                "name": f"App movie {i + 1}",
+                "frames": frames,
+                "unique_id": fake.movies[i].unique_id.lower(),
+            }
             for i, frames in enumerate(APP_MOVIE_FRAMES)
         ],
         "memory": {
@@ -119,7 +124,7 @@ async def test_state(
     data.store.save_look(Look("angel", Canvas(400), None))
     data.store.set_custom_effect(EffectSpec("twinkle", (5,)))
     await data.device.async_show_canvas(Canvas(400), Active("painted", None))  # ours: id 7
-    fake.add_app_movie("Later", 10)  # strands our movie
+    later = fake.add_app_movie("Later", 10)  # strands our movie
     await data.coordinator.async_refresh()
 
     state = await _ok(ws, "state")
@@ -135,7 +140,12 @@ async def test_state(
     ]
     assert state["custom_effect"] == EffectSpec("twinkle", (5,)).to_dict()
     assert [m["id"] for m in state["app_movies"]] == [0, 1, 2, 3, 4, 5, 6, 8]
-    assert state["app_movies"][-1] == {"id": 8, "name": "Later", "frames": 10}
+    assert state["app_movies"][-1] == {
+        "id": 8,
+        "name": "Later",
+        "frames": 10,
+        "unique_id": later.unique_id.lower(),
+    }
     assert (state["memory"]["movies"], state["memory"]["stranded"]) == (9, 1)
     assert state["mode"] == "movie"
 
@@ -385,6 +395,8 @@ async def test_builtin_and_app_movie(
     assert store.active == Active("app_movie", fake.movies[3].unique_id.lower())
     await advance(hass, 10)  # the refresh after a refresh waits for its cooldown
     assert _attr(hass, "effect") == "App: App movie 4"
+    state = await _ok(ws, "state")  # the card finds the playing movie by its unique_id
+    assert state["active"]["ref"] == state["app_movies"][3]["unique_id"]
 
     assert (await _error(ws, "builtin", effect_id=5))["code"] == "invalid_format"
     assert (await _error(ws, "app_movie", movie_id=7))["code"] == "invalid_format"

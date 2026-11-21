@@ -1,9 +1,11 @@
 /*
- * Twinkly Canvas card: paint single LEDs of a Twinkly light from a dashboard.
+ * Twinkly Canvas card: paint single LEDs of a Twinkly light from a dashboard, play moving
+ * effects and saved looks. Three tabs (Colours, Moving, Looks) and a visual editor.
  *
  * One file: no build step, no external resources. The card talks to the integration
  * through its websocket commands. LEDs count from 1 on screen and in selection text,
- * from 0 in the paint and find commands; canvases are base64 R,G,B,W per LED.
+ * from 0 in the paint and find commands; canvases and preview frames are base64
+ * R,G,B,W per LED.
  */
 
 const DOMAIN = "twinkly_canvas";
@@ -11,8 +13,17 @@ const PAGE = 100; // LEDs per page, shown in rows of ROW
 const ROW = 25;
 const SWATCHES = ["red", "silver", "gold", "green", "warm white", "off"];
 const WARM = [0xff, 0xe3, 0xb0]; // the white LED on screen, at full W
+const SLOTS = 3; // colours of a moving effect
+const SAMPLES = 64; // LEDs in a look's preview strip
+const EFFECTS = {
+  twinkle: "Twinkle", chase: "Chase", odd_even_swap: "Odd/even swap", wave: "Wave",
+  comet: "Comet", candy_cane: "Candy cane", breathe: "Breathe", rainbow: "Rainbow",
+};
+const EDITOR_SCHEMA = [
+  { name: "entity", selector: { entity: { integration: DOMAIN, domain: "light" } } },
+];
 
-/** The 0-based LEDs of a group's selection text: "1-20, 45 odd", "all", "every 3 from 2". */
+/** The 0-based LEDs of a group's selection text: "1-20, 45 odd", "all", "all every 3 from 2". */
 function parseSelection(text, count) {
   // the integration's grammar; a group's text never names another group
   let spec = text.trim().split(/\s+/).join(" ");
@@ -57,20 +68,35 @@ function shown([r, g, b, w]) {
 }
 
 /** What the lights show, from state.active; "" for a type this card does not know. */
-function nowShowing({ active, mode }) {
+function nowShowing({ active, mode, app_movies: movies }) {
   if (mode === "off" || active.type === "off") return "Off";
+  const movie = movies.find((m) => m.unique_id === active.ref);
   const text = {
     painted: "Showing your painting",
     custom_effect: "Playing your moving effect",
     look: `Showing the look ${active.ref}`,
     builtin: `Playing built-in effect ${Number(active.ref) + 1}`,
-    app_movie: "Playing a movie from the Twinkly app",
+    app_movie: `Playing ${movie?.name || "a movie"} from the Twinkly app`,
     device_mode: "Playing content from the Twinkly app",
   };
   return text[active.type] ?? "";
 }
 
+/** Bytes of a base64 canvas or preview frame. */
+const bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+
+/** A look name as the integration matches it: ignoring case and surrounding spaces. */
+const nameKey = (name) => name.trim().toLowerCase();
+
 const el = (tag, className = "") => Object.assign(document.createElement(tag), { className });
+const textEl = (tag, className, textContent) => Object.assign(el(tag, className), { textContent });
+
+/** A marker such as "playing"; the element it marks says so with aria-current. */
+function badge(text) {
+  const span = textEl("span", "badge", text);
+  span.setAttribute("aria-hidden", "true");
+  return span;
+}
 
 const STYLE = `
   :host { display: block; }
@@ -92,10 +118,22 @@ const STYLE = `
   .head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
   .name { font-size: 18px; font-weight: 500; }
   .now, .hint { font-size: 12px; color: var(--secondary-text-color); }
+  .tabs {
+    display: flex; gap: 4px; margin-top: 12px; padding: 3px; border-radius: 10px;
+    background: var(--secondary-background-color);
+  }
+  .tab {
+    flex: 1; min-height: 32px; border: none; border-radius: 8px; background: none;
+    font-size: 14px; color: var(--secondary-text-color);
+  }
+  .tab[aria-selected="true"] {
+    background: var(--card-background-color); color: var(--primary-text-color); font-weight: 500;
+  }
   .label {
     font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
     color: var(--secondary-text-color); margin: 16px 0 8px;
   }
+  .section { margin-top: 20px; border-top: 1px solid var(--divider-color); }
   .bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 16px 0 8px; }
   .bar .label { margin: 0; }
   .overview { display: grid; gap: 4px; padding: 6px; border-radius: 8px; background: var(--secondary-background-color); }
@@ -106,7 +144,7 @@ const STYLE = `
   }
   .orow.current { outline: 2px solid var(--primary-color); outline-offset: 2px; }
   .orow:focus-visible { outline-color: var(--primary-text-color); }
-  .orow i { height: 8px; }
+  .orow i, .strip i { height: 8px; }
   .pager { display: flex; align-items: center; gap: 6px; }
   .prow { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 6px; align-items: center; margin-bottom: 4px; }
   .rl { font-size: 10px; text-align: right; color: var(--secondary-text-color); font-variant-numeric: tabular-nums; }
@@ -128,15 +166,21 @@ const STYLE = `
     border: 1px solid var(--divider-color); background: none;
   }
   .chip, .icon, .btn { border: 1px solid var(--divider-color); background: none; font-size: 14px; }
-  .chip { min-height: 32px; padding: 0 12px; border-radius: 16px; }
-  .chip[aria-pressed="true"] {
+  .chip { min-height: 32px; max-width: 100%; padding: 0 12px; border-radius: 16px; overflow-wrap: anywhere; }
+  .chip[aria-pressed="true"], .chip[aria-current="true"] {
     border-color: var(--primary-color);
     background: color-mix(in srgb, var(--primary-color) 20%, transparent);
   }
   select.chip { background: var(--card-background-color); }
+  select.wide { width: 100%; }
+  .badge {
+    margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 500;
+    background: var(--primary-color); color: var(--text-primary-color);
+  }
   .stepper { display: flex; align-items: center; gap: 4px; }
-  .icon { width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 16px; }
+  .icon { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 16px; }
   .sw { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid var(--divider-color); }
+  .sw.empty { border-style: dashed; border-color: var(--secondary-text-color); background: none; }
   input.sw { appearance: none; -webkit-appearance: none; overflow: hidden; background: none; }
   input.sw::-webkit-color-swatch-wrapper { padding: 0; }
   input.sw::-webkit-color-swatch { border: none; background-image: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
@@ -155,47 +199,118 @@ const STYLE = `
   .switch:checked::before { transform: translateX(16px); }
   .btn { min-height: 36px; padding: 0 16px; border-radius: 18px; font-weight: 500; }
   .btn.primary { border-color: var(--primary-color); background: var(--primary-color); color: var(--text-primary-color); }
+  .speed { display: block; width: 100%; margin: 0; accent-color: var(--primary-color); }
+  .meter { height: 6px; margin-top: 6px; border-radius: 3px; overflow: hidden; background: var(--secondary-background-color); }
+  .meter div { height: 100%; background: var(--primary-color); }
+  .look {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px;
+    padding: 4px 0; border-bottom: 1px solid var(--divider-color);
+  }
+  .apply-look {
+    display: grid; gap: 6px; min-width: 0; padding: 6px; border: none; border-radius: 8px;
+    background: none; text-align: left;
+  }
+  .title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+  .lname { font-weight: 500; overflow-wrap: anywhere; }
+  .kind { margin-left: auto; padding-left: 8px; }
+  .strip {
+    display: grid; grid-template-columns: repeat(${SAMPLES}, minmax(0, 1fr));
+    padding: 3px; border-radius: 6px; background: var(--secondary-background-color);
+  }
+  .menu { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; padding: 0 6px 8px; }
+  .gchip { display: inline-flex; align-items: center; gap: 2px; padding-right: 4px; }
+  .gchip button {
+    width: 24px; height: 24px; padding: 0; border: none; border-radius: 50%; background: none;
+    font-size: 16px; line-height: 1;
+  }
 `;
 
 // Static markup only: names from users and the device go in through textContent.
 const BODY = `
   <div class="head"><span class="name"></span><span class="now"></span></div>
-  <div class="bar"><span class="label total"></span><span class="hint">tap to jump</span></div>
-  <div class="overview"></div>
-  <div class="bar">
-    <span class="label pagelabel"></span>
-    <span class="pager">
-      <button class="icon prev" aria-label="Previous page">&lsaquo;</button>
-      <span class="hint pos"></span>
-      <button class="icon next" aria-label="Next page">&rsaquo;</button>
-    </span>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-colours" data-tab="colours">Colours</button>
+    <button class="tab" role="tab" id="tab-moving" data-tab="moving">Moving</button>
+    <button class="tab" role="tab" id="tab-looks" data-tab="looks">Looks</button>
   </div>
-  <div class="page"></div>
-  <div class="label">Select</div>
-  <div class="row">
-    <label class="field">From <input class="from" type="number" inputmode="numeric" min="1"></label>
-    <label class="field">to <input class="to" type="number" inputmode="numeric" min="1"></label>
+  <div class="leds">
+    <div class="bar"><span class="label total"></span><span class="hint">tap to jump</span></div>
+    <div class="overview"></div>
+    <div class="bar">
+      <span class="label pagelabel"></span>
+      <span class="pager">
+        <button class="icon prev" aria-label="Previous page">&lsaquo;</button>
+        <span class="hint pos"></span>
+        <button class="icon next" aria-label="Next page">&rsaquo;</button>
+      </span>
+    </div>
+    <div class="page"></div>
   </div>
-  <div class="row" style="margin-top: 8px">
-    <button class="chip" data-filter="all">All</button>
-    <button class="chip" data-filter="odd">Odd</button>
-    <button class="chip" data-filter="even">Even</button>
-    <span class="stepper">
-      <button class="chip" data-filter="every">Every <span class="step"></span></button>
-      <button class="icon minus" aria-label="Decrease step">&minus;</button>
-      <button class="icon plus" aria-label="Increase step">+</button>
-    </span>
-    <select class="chip group" aria-label="Select a saved group"></select>
-    <button class="chip save">Save as group</button>
+  <div role="tabpanel" data-tab="colours" aria-labelledby="tab-colours">
+    <div class="label">Select</div>
+    <div class="row">
+      <label class="field">From <input class="from" type="number" inputmode="numeric" min="1"></label>
+      <label class="field">to <input class="to" type="number" inputmode="numeric" min="1"></label>
+    </div>
+    <div class="row" style="margin-top: 8px">
+      <button class="chip" data-filter="all">All</button>
+      <button class="chip" data-filter="odd">Odd</button>
+      <button class="chip" data-filter="even">Even</button>
+      <span class="stepper">
+        <button class="chip" data-filter="every">Every <span class="step"></span></button>
+        <button class="icon minus" aria-label="Decrease step">&minus;</button>
+        <button class="icon plus" aria-label="Increase step">+</button>
+      </span>
+      <select class="chip group" aria-label="Select a saved group"></select>
+      <button class="chip save">Save as group</button>
+    </div>
+    <div class="label colourlabel"></div>
+    <div class="row swatches"></div>
+    <div class="row between" style="margin-top: 16px">
+      <label class="toggle"><input class="switch live" type="checkbox" role="switch" checked>Live on tree</label>
+      <span class="row">
+        <button class="btn primary apply" hidden>Apply</button>
+        <button class="btn find">Find on tree</button>
+      </span>
+    </div>
   </div>
-  <div class="label colourlabel"></div>
-  <div class="row swatches"></div>
-  <div class="row between" style="margin-top: 16px">
-    <label class="toggle"><input class="switch live" type="checkbox" role="switch" checked>Live on tree</label>
-    <span class="row">
-      <button class="btn primary apply" hidden>Apply</button>
-      <button class="btn find">Find on tree</button>
-    </span>
+  <div role="tabpanel" data-tab="moving" aria-labelledby="tab-moving">
+    <div class="label">Make your own</div>
+    <div class="row kinds"></div>
+    <div class="label">Colours</div>
+    <div class="row"><span class="row slots"></span><span class="hint slothint"></span></div>
+    <div class="row mswatches" style="margin-top: 8px"></div>
+    <div class="label">Runs on</div>
+    <select class="chip wide runs" aria-label="Runs on"></select>
+    <label class="toggle" style="margin-top: 12px">
+      <input class="switch keep" type="checkbox" role="switch" checked>Other LEDs keep their colours
+    </label>
+    <div class="label">Speed</div>
+    <input class="speed" type="range" min="0" max="100" value="50" aria-label="Speed">
+    <div class="row between hint"><span>slow</span><span>fast</span></div>
+    <div class="row between" style="margin-top: 16px">
+      <button class="btn preview">Preview</button>
+      <button class="btn primary play">Play on tree</button>
+    </div>
+    <div class="section">
+      <div class="label">Already on the lights</div>
+      <div class="row onlights"></div>
+      <div class="hint memtext" style="margin-top: 12px"></div>
+      <div class="meter" aria-hidden="true"><div class="meterbar"></div></div>
+    </div>
+  </div>
+  <div role="tabpanel" data-tab="looks" aria-labelledby="tab-looks">
+    <div class="label">Looks you saved</div>
+    <div class="looks"></div>
+    <div class="row between" style="margin-top: 12px">
+      <span class="hint lookhint"></span>
+      <button class="btn primary savelook">Save what's on now</button>
+    </div>
+    <div class="section">
+      <div class="label">Groups you saved</div>
+      <div class="row groups"></div>
+      <div class="hint grouphint" style="margin-top: 8px"></div>
+    </div>
   </div>
 `;
 
@@ -210,6 +325,9 @@ class TwinklyCanvasCard extends HTMLElement {
     this._step = 3;
     this._live = true;
     this._paints = 0;
+    this._tab = "colours";
+    this._slots = []; // the moving effect's colours: { color, name }
+    this._ticket = 0; // counts preview stops: a render still on its way is dropped
     this._endDrag = () => (this._drag = undefined);
   }
 
@@ -217,6 +335,10 @@ class TwinklyCanvasCard extends HTMLElement {
     const ids = Object.keys(hass.entities ?? {});
     const light = ids.find((id) => id.startsWith("light.") && hass.entities[id].platform === DOMAIN);
     return { entity: light ?? "" };
+  }
+
+  static getConfigElement() {
+    return document.createElement("twinkly-canvas-card-editor");
   }
 
   setConfig(config) {
@@ -250,6 +372,7 @@ class TwinklyCanvasCard extends HTMLElement {
     window.removeEventListener("pointerup", this._endDrag);
     window.removeEventListener("pointercancel", this._endDrag);
     this._drag = undefined;
+    this._stopPreview();
   }
 
   async _ws(command, data = {}) {
@@ -261,6 +384,7 @@ class TwinklyCanvasCard extends HTMLElement {
 
   /** Run a command the user asked for; false (and the error shown) when it fails. */
   async _act(command, data) {
+    this._stopPreview(); // another action ends a preview
     try {
       await this._ws(command, data);
       return true;
@@ -268,6 +392,11 @@ class TwinklyCanvasCard extends HTMLElement {
       this._fail(err);
       return false;
     }
+  }
+
+  /** Run a command, then show the state it left. */
+  async _run(command, data) {
+    if (await this._act(command, data)) await this._load();
   }
 
   _fail(err) {
@@ -286,7 +415,7 @@ class TwinklyCanvasCard extends HTMLElement {
     }
     // a paint sent after this request may be missing from its canvas: keep the card's own
     if (paints === this._paints || this._canvas?.length !== state.led_count * 4) {
-      this._canvas = Uint8Array.from(atob(state.canvas), (c) => c.charCodeAt(0));
+      this._canvas = bytes(state.canvas);
     }
     this._state = state;
     if (this._built !== state.led_count) this._build();
@@ -298,21 +427,27 @@ class TwinklyCanvasCard extends HTMLElement {
       ...groups.map((name) => new Option(name, name))
     );
     this._$.group.disabled = !groups.length;
+    this._fillRuns(groups);
+    this._renderLists();
     this._draw();
   }
 
   _build() {
-    const { led_count: count, colors } = this._state;
+    const { led_count: count, effects } = this._state;
+    this._stopPreview(false); // its frames have another LED count
     this._built = count;
     this._pages = Math.ceil(count / PAGE);
     this._page = 0;
     this._sel = new Set([...this._sel].filter((i) => i < count));
+    this._runsPicked = false;
     this._body.innerHTML = BODY;
     const q = (selector) => this._body.querySelector(selector);
     const $ = (this._$ = {});
     for (const name of [
-      "name", "now", "total", "pagelabel", "prev", "pos", "next", "from", "to", "step",
+      "name", "now", "leds", "total", "pagelabel", "prev", "pos", "next", "from", "to", "step",
       "minus", "plus", "group", "save", "colourlabel", "swatches", "live", "apply", "find",
+      "kinds", "slots", "slothint", "mswatches", "runs", "keep", "speed", "preview", "play",
+      "onlights", "memtext", "meterbar", "looks", "lookhint", "savelook", "groups", "grouphint",
     ]) {
       $[name] = q(`.${name}`);
     }
@@ -320,6 +455,7 @@ class TwinklyCanvasCard extends HTMLElement {
     $.from.max = $.to.max = count;
     $.from.placeholder = "1";
     $.to.placeholder = String(count);
+    $.live.checked = this._live; // a rebuild keeps the switch as the user left it
 
     // the overview: one strip per page, a bar per LED
     this._minis = [];
@@ -353,6 +489,9 @@ class TwinklyCanvasCard extends HTMLElement {
       }
     }
 
+    this._tabs = [...this._body.querySelectorAll('[role="tab"]')];
+    this._panels = [...this._body.querySelectorAll('[role="tabpanel"]')];
+    for (const tab of this._tabs) tab.addEventListener("click", () => this._showTab(tab.dataset.tab));
     $.prev.addEventListener("click", () => this._show(this._page - 1));
     $.next.addEventListener("click", () => this._show(this._page + 1));
     $.from.addEventListener("input", () => this._selectRange());
@@ -370,26 +509,74 @@ class TwinklyCanvasCard extends HTMLElement {
     $.live.addEventListener("change", () => this._setLive($.live.checked));
     $.apply.addEventListener("click", () => this._commit());
     $.find.addEventListener("click", () => this._find());
+    this._paintControls = this._swatches($.swatches, (color) => this._paint(color));
 
-    this._paintControls = [];
-    for (const name of SWATCHES.filter((n) => n in colors)) {
-      const swatch = $.swatches.appendChild(el("button", "sw"));
+    // the Moving tab: every change redraws, which also ends a preview of other settings
+    if (!effects.includes(this._kind)) this._kind = effects[0];
+    this._kinds = effects.map((kind) => {
+      const chip = $.kinds.appendChild(textEl("button", "chip", EFFECTS[kind] ?? kind));
+      chip.dataset.kind = kind;
+      chip.addEventListener("click", () => {
+        this._kind = kind;
+        this._draw();
+      });
+      return chip;
+    });
+    this._slotButtons = Array.from({ length: SLOTS }, (_, k) => {
+      const slot = $.slots.appendChild(el("button", "sw"));
+      slot.addEventListener("click", () => {
+        this._slots.splice(k, 1);
+        this._draw();
+      });
+      return slot;
+    });
+    this._slotControls = this._swatches($.mswatches, (color, name) => {
+      if (this._slots.length < SLOTS) this._slots.push({ color, name });
+      this._draw();
+    });
+    $.runs.addEventListener("change", () => {
+      this._runsPicked = true;
+      this._draw();
+    });
+    $.keep.addEventListener("change", () => this._draw());
+    $.speed.addEventListener("input", () => this._draw());
+    $.preview.addEventListener("click", () => this._preview());
+    $.play.addEventListener("click", () => this._run("effect/play", { spec: this._spec() }));
+    $.savelook.addEventListener("click", () => this._saveLook());
+    this._showTab(this._tab);
+  }
+
+  /** The named swatches and a colour picker, in row; pick gets [r, g, b, w] and a name. */
+  _swatches(row, pick) {
+    const { colors } = this._state;
+    const controls = SWATCHES.filter((name) => name in colors).map((name) => {
+      const swatch = row.appendChild(el("button", "sw"));
       swatch.title = name[0].toUpperCase() + name.slice(1);
       swatch.setAttribute("aria-label", swatch.title);
       swatch.style.background = shown(colors[name]);
-      swatch.addEventListener("click", () => this._paint(colors[name]));
-      this._paintControls.push(swatch);
-    }
-    const picker = $.swatches.appendChild(el("input", "sw"));
+      swatch.addEventListener("click", () => pick(colors[name], swatch.title));
+      return swatch;
+    });
+    const picker = row.appendChild(el("input", "sw"));
     picker.type = "color";
     picker.title = "Custom colour";
     picker.setAttribute("aria-label", picker.title);
     picker.addEventListener("change", () => {
       const hex = picker.value;
       picker.value = "#000000"; // so picking the same colour again still counts as a change
-      this._paint([1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16)).concat(0));
+      pick([1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16)).concat(0), hex);
     });
-    this._paintControls.push(picker);
+    return [...controls, picker];
+  }
+
+  _showTab(tab) {
+    this._tab = tab;
+    this._stopPreview();
+    for (const button of this._tabs) {
+      button.setAttribute("aria-selected", String(button.dataset.tab === tab));
+    }
+    for (const panel of this._panels) panel.hidden = panel.dataset.tab !== tab;
+    this._$.leds.hidden = tab === "looks"; // the dots serve painting and the preview
   }
 
   /** Bring every dot and control in line with the canvas, the selection and the page. */
@@ -397,8 +584,7 @@ class TwinklyCanvasCard extends HTMLElement {
     const count = this._state.led_count;
     const page = this._page;
     const $ = this._$;
-    const color = (i) => shown(this._canvas.subarray(i * 4, i * 4 + 4));
-    this._minis.forEach((mini, i) => (mini.style.background = color(i)));
+    this._drawLeds();
     this._orows.forEach((row, p) => row.classList.toggle("current", p === page));
     $.pagelabel.textContent = `LEDs ${page * PAGE + 1}-${Math.min(count, (page + 1) * PAGE)}`;
     $.pos.textContent = `${page + 1} of ${this._pages}`;
@@ -413,7 +599,6 @@ class TwinklyCanvasCard extends HTMLElement {
       const i = page * PAGE + k;
       dot.hidden = i >= count;
       if (i >= count) return;
-      dot.style.background = color(i);
       dot.setAttribute("aria-label", `LED ${i + 1}`);
       dot.setAttribute("aria-pressed", String(this._sel.has(i)));
     });
@@ -428,6 +613,231 @@ class TwinklyCanvasCard extends HTMLElement {
     $.find.disabled = !n || this._finding;
     $.find.textContent = this._finding ? "Finding..." : "Find on tree";
     $.apply.hidden = this._live;
+    this._drawMoving();
+  }
+
+  /** The overview and the page's dots: the preview's frame while it plays, else the canvas. */
+  _drawLeds() {
+    const leds = this._frame ?? this._canvas;
+    const color = (i) => shown(leds.subarray(i * 4, i * 4 + 4));
+    this._minis.forEach((mini, i) => (mini.style.background = color(i)));
+    const first = this._page * PAGE;
+    this._dots.forEach((dot, k) => {
+      if (first + k < this._state.led_count) dot.style.background = color(first + k);
+    });
+  }
+
+  _drawMoving() {
+    const $ = this._$;
+    const n = this._sel.size;
+    for (const chip of this._kinds) {
+      chip.setAttribute("aria-pressed", String(chip.dataset.kind === this._kind));
+    }
+    this._slotButtons.forEach((slot, k) => {
+      const pick = this._slots[k];
+      slot.disabled = !pick;
+      slot.classList.toggle("empty", !pick);
+      slot.style.background = pick ? shown(pick.color) : "";
+      slot.setAttribute("aria-label", pick ? `Remove colour ${k + 1}, ${pick.name}` : `Colour ${k + 1}, empty`);
+    });
+    for (const control of this._slotControls) control.disabled = this._slots.length === SLOTS;
+    $.slothint.textContent = this._slots.length
+      ? "Tap a chosen colour to remove it"
+      : "None chosen: the effect's own colours";
+    const selection = $.runs.options[0];
+    selection.textContent = `Selected LEDs (${n})`;
+    selection.disabled = !n;
+    // follows the selection until the user picks; an emptied selection falls back to all
+    if (!this._runsPicked || (!n && selection.selected)) $.runs.value = n ? "" : "all";
+    if (this._previewed !== undefined && JSON.stringify(this._spec()) !== this._previewed) {
+      this._stopPreview();
+    }
+  }
+
+  /** Runs on: the selection (""), each group (its name), all ("all", never a group's name). */
+  _fillRuns(groups) {
+    const runs = this._$.runs;
+    const chosen = runs.value;
+    runs.replaceChildren(
+      new Option("", ""),
+      ...groups.map((name) => new Option(name, name)),
+      new Option("All LEDs", "all")
+    );
+    runs.value = chosen;
+    if (runs.value !== chosen) this._runsPicked = false; // the chosen group is gone
+  }
+
+  /** The moving effect the Moving tab describes, as effect/render and effect/play take it. */
+  _spec() {
+    const runs = this._$.runs.value;
+    return {
+      kind: this._kind,
+      leds: runs === "" ? [...this._sel].sort((a, b) => a - b) : runs,
+      colors: this._slots.map((slot) => slot.color),
+      speed: this._$.speed.valueAsNumber,
+      keep_others: this._$.keep.checked,
+    };
+  }
+
+  /** Play the effect's frames on the dots until another action or other settings. */
+  async _preview() {
+    this._stopPreview();
+    const ticket = this._ticket;
+    const spec = this._spec();
+    this._previewed = JSON.stringify(spec);
+    let reply;
+    try {
+      reply = await this._ws("effect/render", { spec });
+    } catch (err) {
+      this._fail(err);
+      return;
+    }
+    if (ticket !== this._ticket || !reply.frames.length) return; // something else came first
+    const frames = reply.frames.map(bytes);
+    let k = 0;
+    const next = () => {
+      this._frame = frames[k++ % frames.length];
+      this._drawLeds();
+    };
+    next();
+    this._timer = setInterval(next, 1000 / reply.fps);
+  }
+
+  /** End the preview, or drop the one on its way; draw = false while the dots are replaced. */
+  _stopPreview(draw = true) {
+    this._ticket++;
+    this._previewed = undefined;
+    if (this._timer === undefined) return;
+    clearInterval(this._timer);
+    this._timer = this._frame = undefined;
+    if (draw) this._drawLeds();
+  }
+
+  /** The lists from state: what is on the lights, the looks and the groups; focus stays put. */
+  _renderLists(focus = this.shadowRoot.activeElement?.dataset.key) {
+    this._renderOnLights();
+    this._renderLooks();
+    this._renderGroups();
+    if (focus) [...this._body.querySelectorAll("[data-key]")].find((e) => e.dataset.key === focus)?.focus();
+  }
+
+  _renderOnLights() {
+    const { builtins, app_movies: movies, active, mode, memory } = this._state;
+    const on = mode !== "off"; // off: nothing plays, active names what comes back
+    const item = (text, key, current, command, data) => {
+      const chip = textEl("button", "chip", text);
+      chip.dataset.key = key;
+      if (current) {
+        chip.setAttribute("aria-current", "true");
+        chip.append(badge("playing"));
+      }
+      chip.addEventListener("click", () => this._run(command, data));
+      return chip;
+    };
+    const items = [];
+    for (let n = 1; n <= builtins; n++) {
+      const current = on && active.type === "builtin" && Number(active.ref) === n - 1;
+      items.push(item(`Built-in ${n}`, `builtin ${n}`, current, "builtin", { effect_id: n - 1 }));
+    }
+    for (const movie of movies) {
+      const current = on && active.type === "app_movie" && movie.unique_id === active.ref;
+      const name = movie.name || "Unnamed movie";
+      items.push(item(name, `movie ${movie.id}`, current, "app_movie", { movie_id: movie.id }));
+    }
+    this._$.onlights.replaceChildren(...items);
+    const stranded = memory.stranded > 0 ? `, ${memory.stranded} stranded` : "";
+    this._$.memtext.textContent = `Memory on the lights: ${Math.round(memory.used_pct)}% used${stranded}`;
+    this._$.meterbar.style.width = `${Math.min(100, memory.used_pct)}%`;
+  }
+
+  _renderLooks() {
+    const { looks, active, mode, led_count: count } = this._state;
+    const on = mode !== "off" && active.type === "look" ? nameKey(active.ref ?? "") : undefined;
+    const rows = looks.map((look) => {
+      const key = nameKey(look.name);
+      const row = el("div", "look");
+      const apply = row.appendChild(el("button", "apply-look"));
+      apply.dataset.key = `look ${key}`;
+      apply.setAttribute("aria-label", look.name);
+      const title = apply.appendChild(el("span", "title"));
+      title.append(textEl("span", "lname", look.name));
+      if (key === on) {
+        apply.setAttribute("aria-current", "true");
+        title.append(badge("on now"));
+      }
+      title.append(textEl("span", "hint kind", look.kind));
+      const strip = apply.appendChild(el("span", "strip"));
+      const canvas = bytes(look.canvas);
+      for (let k = 0; k < SAMPLES; k++) {
+        const i = Math.floor((k * count) / SAMPLES);
+        strip.appendChild(el("i")).style.background = shown(canvas.subarray(i * 4, i * 4 + 4));
+      }
+      apply.addEventListener("click", () => this._run("look/apply", { name: look.name }));
+
+      const more = row.appendChild(textEl("button", "icon", "\u22ee"));
+      more.dataset.key = `menu ${key}`;
+      more.setAttribute("aria-label", `Options for ${look.name}`);
+      more.setAttribute("aria-expanded", String(key === this._menu));
+      more.addEventListener("click", () => {
+        this._menu = key === this._menu ? undefined : key;
+        this._renderLists();
+      });
+      const menu = row.appendChild(el("div", "menu"));
+      menu.hidden = key !== this._menu;
+      for (const [text, action] of [
+        ["Rename", () => this._renameLook(look.name)],
+        ["Update from what's on now", () => this._run("look/update", { name: look.name })],
+        ["Delete", () => this._deleteLook(look.name)],
+      ]) {
+        menu.appendChild(textEl("button", "btn", text)).addEventListener("click", () => {
+          this._menu = undefined;
+          this._renderLists(more.dataset.key); // the menu closes, focus goes back to its button
+          action();
+        });
+      }
+      return row;
+    });
+    this._$.looks.replaceChildren(...rows);
+    this._$.lookhint.textContent = looks.length
+      ? "\u22ee to rename, update or delete"
+      : "No looks yet: paint or play something, then save it.";
+  }
+
+  _renderGroups() {
+    const names = Object.keys(this._state.groups);
+    const chips = names.map((name) => {
+      const chip = el("span", "chip gchip");
+      chip.append(textEl("span", "", name));
+      const remove = chip.appendChild(textEl("button", "", "\u00d7"));
+      remove.setAttribute("aria-label", `Delete group ${name}`);
+      remove.addEventListener("click", () => this._deleteGroup(name));
+      return chip;
+    });
+    this._$.groups.replaceChildren(...chips);
+    this._$.grouphint.textContent = names.length
+      ? "Usable in Colours, Moving and automations."
+      : "No groups yet: select LEDs in Colours and save them as a group.";
+  }
+
+  async _saveLook() {
+    const name = window.prompt("Name of the new look")?.trim();
+    if (!name) return;
+    const taken = this._state.looks.find((look) => nameKey(look.name) === nameKey(name));
+    if (taken && !window.confirm(`Replace the look "${taken.name}"?`)) return;
+    await this._run("look/save", { name });
+  }
+
+  async _renameLook(name) {
+    const newName = window.prompt(`New name for the look "${name}"`, name)?.trim();
+    if (newName && newName !== name) await this._run("look/rename", { name, new_name: newName });
+  }
+
+  async _deleteLook(name) {
+    if (window.confirm(`Delete the look "${name}"?`)) await this._run("look/delete", { name });
+  }
+
+  async _deleteGroup(name) {
+    if (window.confirm(`Delete the group "${name}"?`)) await this._run("group/delete", { name });
   }
 
   _show(page) {
@@ -510,8 +920,7 @@ class TwinklyCanvasCard extends HTMLElement {
 
   async _saveGroup() {
     const name = window.prompt("Name of the new group")?.trim();
-    if (!name) return;
-    if (await this._act("group/save", { name, leds: formatSelection(this._sel) })) this._load();
+    if (name) await this._run("group/save", { name, leds: formatSelection(this._sel) });
   }
 
   /** Paint the selection: the dots change at once, the lights when live is on. */
@@ -548,12 +957,40 @@ class TwinklyCanvasCard extends HTMLElement {
   }
 }
 
+/** The visual editor: an entity picker, through Home Assistant's own ha-form. */
+class TwinklyCanvasCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    // HA defines ha-form lazily; a built-in card's editor loads it (the usual custom-card idiom)
+    if (!customElements.get("ha-form")) customElements.get("hui-button-card")?.getConfigElement?.();
+    this._form = document.createElement("ha-form");
+    this._form.schema = EDITOR_SCHEMA;
+    this._form.computeLabel = () => "Entity"; // the schema's one field
+    this._form.addEventListener("value-changed", (e) => {
+      this._config = { ...this._config, ...e.detail.value };
+      const detail = { config: this._config };
+      this.dispatchEvent(new CustomEvent("config-changed", { detail, bubbles: true, composed: true }));
+    });
+    this.attachShadow({ mode: "open" }).append(this._form);
+  }
+
+  setConfig(config) {
+    this._config = config;
+    this._form.data = config;
+  }
+
+  set hass(hass) {
+    this._form.hass = hass;
+  }
+}
+
 if (!customElements.get("twinkly-canvas-card")) {
   customElements.define("twinkly-canvas-card", TwinklyCanvasCard);
+  customElements.define("twinkly-canvas-card-editor", TwinklyCanvasCardEditor);
   window.customCards = window.customCards || [];
   window.customCards.push({
     type: "twinkly-canvas-card",
     name: "Twinkly Canvas",
-    description: "Paint single LEDs of a Twinkly light.",
+    description: "Paint single LEDs of a Twinkly light, play effects and saved looks.",
   });
 }
