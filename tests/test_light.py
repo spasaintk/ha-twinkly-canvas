@@ -158,12 +158,66 @@ async def test_turn_on_unknown_effect(
     assert err.value.translation_key == "unknown_effect"
 
 
+async def test_turn_on_validates_effect_first(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    with pytest.raises(ServiceValidationError) as err:
+        await _turn_on(hass, brightness=128, effect="Look: Missing")
+    assert err.value.translation_key == "unknown_effect"
+    assert fake.brightness == 100  # refused before any change
+
+
 async def test_turn_off(
     hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
 ) -> None:
     await _turn_off(hass)
     assert fake.mode == "off"
     assert hass.states.get(ENTITY).state == STATE_OFF
+
+
+async def test_off_on_keeps_app_effect(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.effect_id = 2  # chosen in the app
+    await _turn_off(hass)
+    await _turn_on(hass)
+    assert (fake.mode, fake.effect_id) == ("effect", 2)
+    assert len(fake.movies) == 7  # nothing uploaded
+
+
+async def test_off_on_keeps_app_movie(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.current, fake.mode = fake.movies[3], "movie"  # chosen in the app
+    await _turn_off(hass)
+    await _turn_on(hass)
+    assert fake.playing is fake.movies[3]
+    assert len(fake.movies) == 7  # nothing uploaded
+
+
+async def test_off_on_keeps_playlist(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.mode = "playlist"  # chosen in the app
+    await _turn_off(hass)
+    await _turn_on(hass)
+    assert fake.mode == "playlist"
+
+
+async def test_turn_on_while_on_changes_nothing(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.effect_id = 2  # chosen in the app
+    calls = len(fake.calls)
+    changes = {"set_mode", "set_effect", "new_movie", "send_rt_frame"}
+    await _turn_on(hass)
+    assert (fake.mode, fake.effect_id, len(fake.movies)) == ("effect", 2, 7)
+    assert not changes & set(fake.calls[calls:])
+
+    await _turn_on(hass, brightness=128)
+    assert fake.brightness == 50
+    assert (fake.mode, fake.effect_id, len(fake.movies)) == ("effect", 2, 7)
+    assert not changes & set(fake.calls[calls:])
 
 
 async def test_brightness(

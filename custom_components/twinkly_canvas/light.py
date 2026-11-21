@@ -143,6 +143,12 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
+        if ATTR_EFFECT in kwargs and kwargs[ATTR_EFFECT] not in self.effect_list:
+            raise ServiceValidationError(  # before anything changes, brightness too
+                translation_domain=DOMAIN,
+                translation_key="unknown_effect",
+                translation_placeholders={"effect": kwargs[ATTR_EFFECT]},
+            )
         if ATTR_BRIGHTNESS in kwargs:  # HA's light service turns brightness 0 into turn_off
             percent = max(1, round(kwargs[ATTR_BRIGHTNESS] * 100 / 255))
             await self.device.async_set_brightness(percent)
@@ -161,14 +167,8 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         await self.coordinator.async_request_refresh()
 
     async def _async_select_effect(self, effect: str) -> None:
-        """Show an effect list entry; its prefix says what it is."""
+        """Show an effect list entry (async_turn_on checked it); its prefix says what it is."""
         store, state = self.store, self.coordinator.data
-        if effect not in effect_options(store, state):
-            raise ServiceValidationError(
-                translation_domain=DOMAIN,
-                translation_key="unknown_effect",
-                translation_placeholders={"effect": effect},
-            )
         if effect == EFFECT_PAINTED:
             await self.device.async_show_canvas(store.canvas, Active("painted", None))
         elif effect == EFFECT_CUSTOM:

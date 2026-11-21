@@ -184,7 +184,7 @@ async def _paint(light: TwinklyCanvasLight, msg: dict[str, Any]) -> None:
     canvas.set(msg["leds"], msg["color"])  # checks every index and the colour
     light.store.set_canvas(canvas)
     if msg["live"]:
-        await light.device.async_request_preview(light.store.canvas)
+        await light.device.async_request_preview()
 
 
 @_command("commit")

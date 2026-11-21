@@ -19,6 +19,7 @@ from pytest_homeassistant.common import (
 
 from custom_components.twinkly_canvas.canvas import Canvas
 from custom_components.twinkly_canvas.const import DOMAIN
+from custom_components.twinkly_canvas.store import CanvasStore
 
 from .fake_device import GESTALT, FakeTwinkly
 
@@ -59,13 +60,22 @@ async def test_unload_cancels_pending_commit(
     device = entry.runtime_data.device
     canvas = Canvas(400)
     canvas.set(range(5), (255, 0, 0, 0))
-    await device.async_request_preview(canvas)
+    entry.runtime_data.store.set_canvas(canvas)  # the card stores the painting first
+    await device.async_request_preview()
     movies = len(fake.movies)
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await _advance(hass, 10)
     assert len(fake.movies) == movies
     assert fake.rt_frames == []  # the debounced preview frame never went out either
+
+
+async def test_unload_saves_store_at_once(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    entry.runtime_data.store.save_group("Top", "1-10")
+    assert await hass.config_entries.async_unload(entry.entry_id)  # within the 1 s delay
+    store = CanvasStore(hass, entry.entry_id, 400)
+    await store.async_load()
+    assert store.groups == {"Top": "1-10"}
 
 
 async def test_setup_retries_when_unreachable(

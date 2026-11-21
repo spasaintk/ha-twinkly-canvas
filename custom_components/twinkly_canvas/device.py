@@ -22,7 +22,7 @@ from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.event import async_call_later
 
-from .api import TwinklyAuthError, TwinklyClient, TwinklyError
+from .api import TwinklyAuthError, TwinklyClient, TwinklyError, TwinklyResponseError
 from .canvas import OFF, Canvas
 from .colors import RGBW, scale
 from .const import (
@@ -115,10 +115,11 @@ class TwinklyDevice:
         self.info = info
         self._lock = asyncio.Lock()
         self._rt_until = 0.0  # loop time until which our last real-time frame holds rt mode
-        self._preview = store.canvas
+        self._rt_epoch = 0  # the client's token epoch when we sent that frame
         # The canvas our last upload showed (an effect: its base); None: unknown after a start
         self._uploaded: list[RGBW] | None = None
         self._cancel_commit: CALLBACK_TYPE | None = None
+        self._closed = False  # shut down: no timer may start again
         self._debouncer = Debouncer(
             hass,
             _LOGGER,
@@ -136,11 +137,10 @@ class TwinklyDevice:
         """Poll the device. Raises TwinklyError; the coordinator reports it."""
         async with self._lock:
             mode = (await self.client.get_mode())["mode"]
+            if mode != "rt":
+                self._rt_until = 0.0  # something else ended rt: our next frame enters it again
             movies = await self._movie_state()
-            current = None
-            if mode == "movie":  # movies/current reports a stale id in other modes
-                movie_id = (await self.client.get_current_movie()).get("id")
-                current = next((m for m in movies.movies if m.id == movie_id), None)
+            current = await self._playing_movie(movies) if mode == "movie" else None
             return DeviceState(
                 mode=mode,
                 brightness=await self.client.get_brightness(),
@@ -164,9 +164,10 @@ class TwinklyDevice:
         async with self._command():
             await self._play_effect(spec, base, active)
 
-    async def async_request_preview(self, canvas: Canvas) -> None:
-        """Show canvas live (debounced) and store it as a movie once painting pauses."""
-        self._preview = canvas
+    async def async_request_preview(self) -> None:
+        """Show the canvas live (debounced) and store it as a movie once painting pauses."""
+        if self._closed:
+            return
         self._debouncer.async_schedule_call()
         if self._cancel_commit:
             self._cancel_commit()
@@ -175,14 +176,11 @@ class TwinklyDevice:
         )
 
     async def async_commit_now(self) -> None:
-        """Store the painting right away.
+        """Store the painting (the canvas) right away, unless our last upload showed it.
 
-        That is a pending live preview, else the canvas if it changed since our last
-        upload: painting with live off only changes the stored canvas.
+        Painting with live off only changes the stored canvas.
         """
-        if self._cancel_commit:
-            await self.async_show_canvas(self._preview, Active("painted", None))
-        elif self.store.canvas.pixels != self._uploaded:
+        if self._cancel_commit or self.store.canvas.pixels != self._uploaded:
             await self.async_show_canvas(self.store.canvas, Active("painted", None))
 
     async def async_find(self, indices: list[int]) -> None:
@@ -196,11 +194,12 @@ class TwinklyDevice:
             on.set(indices, _FIND_ON)
             off.set(indices, OFF)
             frames = (on.to_frame(self.info.profile), off.to_frame(self.info.profile))
-            was_off = (await self.client.get_mode())["mode"] == "off"
+            mode = (await self.client.get_mode())["mode"]
+            await self._record_playing(mode)
             for i in range(round(FIND_SECONDS / _BLINK_SECONDS)):
                 await self._send_rt(frames[i % 2])
                 await asyncio.sleep(_BLINK_SECONDS)
-            if was_off:
+            if mode == "off":
                 await self._set_mode("off")
             else:
                 await self._restore()
@@ -218,16 +217,17 @@ class TwinklyDevice:
             self.store.active = Active("builtin", str(effect_id))
 
     async def async_select_app_movie(self, movie_id: int) -> None:
-        self._cancel_preview()
+        """Play a movie of the Twinkly app; our own movies are refused like unknown ids."""
         async with self._command():
             state = await self._movie_state()
             movie = next((m for m in state.movies if m.id == movie_id), None)
-            if movie is None:
+            if movie is None or movie.unique_id in self.store.our_movies:
                 raise ServiceValidationError(
                     translation_domain=DOMAIN,
                     translation_key="unknown_effect",
                     translation_placeholders={"effect": str(movie_id)},
                 )
+            self._cancel_preview()  # only now: a refused id keeps a pending painting
             await self.client.set_current_movie(movie.id)
             await self._set_mode("movie")
             self.store.active = Active("app_movie", movie.unique_id)
@@ -245,16 +245,20 @@ class TwinklyDevice:
             await self._show_look(look)
 
     async def async_turn_on(self) -> None:
-        """Show what was shown before the lights went off."""
+        """Show store.active again if the lights are off; lights that are on stay as they are."""
         async with self._command():
+            if (await self.client.get_mode())["mode"] != "off":
+                return
             if self.store.active.type == "off":
                 self.store.active = Active("painted", None)
             await self._restore()
 
     async def async_turn_off(self) -> None:
-        """Lights off. store.active stays, so turning on brings it back."""
-        self._cancel_preview()
+        """Lights off; store.active names what turning on brings back."""
+        painting = self._cancel_preview()
         async with self._command():
+            if not painting:  # a dropped live painting is newer than what plays
+                await self._record_playing((await self.client.get_mode())["mode"])
             await self._set_mode("off")
 
     async def async_set_brightness(self, percent: int) -> None:
@@ -262,9 +266,15 @@ class TwinklyDevice:
             await self.client.set_brightness(percent)
 
     async def async_shutdown(self) -> None:
-        """Cancel a pending live preview and its commit; nothing fires after this."""
+        """Drop a pending live preview: nothing fires after this.
+
+        A command in flight finishes first.
+        """
+        self._closed = True
         self._cancel_preview()
         self._debouncer.async_shutdown()
+        async with self._lock:  # so a store flush after this holds the command's changes
+            pass
 
     @asynccontextmanager
     async def _command(self) -> AsyncIterator[None]:
@@ -280,31 +290,41 @@ class TwinklyDevice:
                 ) from err
 
     @callback
-    def _cancel_preview(self) -> None:
-        """Drop a pending live preview and its commit: a newer command wins."""
+    def _cancel_preview(self) -> bool:
+        """Drop a pending live preview and its commit: a newer command wins.
+
+        True when a commit was pending. The painting was then the newest thing on the
+        lights, so it becomes active without a movie of its own: restore uploads it. A
+        caller that shows something else sets active itself afterwards.
+        """
         self._debouncer.async_cancel()
-        if self._cancel_commit:
-            self._cancel_commit()
-            self._cancel_commit = None
-            # our movie is older than the painting: restore uploads the canvas instead
-            self.store.current_movie_uid = None
+        if not self._cancel_commit:
+            return False
+        self._cancel_commit()
+        self._cancel_commit = None
+        self.store.current_movie_uid = None
+        self.store.active = Active("painted", None)
+        return True
 
     async def _async_send_preview(self) -> None:
         async with self._lock:
+            if not self._cancel_commit:  # a command dropped this preview while it waited
+                return
             try:
-                await self._send_rt(self._preview.to_frame(self.info.profile))
+                await self._send_rt(self.store.canvas.to_frame(self.info.profile))
             except TwinklyError as err:
                 _LOGGER.debug("Live preview frame not shown: %s", err)
 
     async def _async_commit(self, _now: datetime) -> None:
         self._cancel_commit = None
         try:
-            await self.async_show_canvas(self._preview, Active("painted", None))
+            await self.async_show_canvas(self.store.canvas, Active("painted", None))
         except HomeAssistantError as err:
             _LOGGER.warning("Could not store the painting on the lights: %s", err)
 
     async def _show_canvas(self, canvas: Canvas, active: Active) -> None:
         self.store.set_canvas(canvas)
+        self.store.current_movie_uid = None  # set again once the upload worked
         await self._upload([canvas.to_frame(self.info.profile)], self.fps)
         self._uploaded = list(canvas.pixels)
         self.store.active = active
@@ -313,6 +333,7 @@ class TwinklyDevice:
         frames = await self.hass.async_add_executor_job(
             render, spec, base, self.fps, self.info.profile, MAX_FRAMES_PER_MOVIE
         )
+        self.store.current_movie_uid = None  # set again once the upload worked
         await self._upload(frames, self.fps)
         self._uploaded = list(base.pixels)
         self.store.active = active
@@ -334,6 +355,9 @@ class TwinklyDevice:
             await self.client.set_effect(int(active.ref))  # type: ignore[arg-type]
             await self._set_mode("effect")
             return
+        if active.type == "device_mode":
+            await self._set_mode(active.ref)  # type: ignore[arg-type]
+            return
         uid = active.ref if active.type == "app_movie" else self.store.current_movie_uid
         state = await self._movie_state()
         if movie := next((m for m in state.movies if m.unique_id == uid), None):
@@ -346,8 +370,28 @@ class TwinklyDevice:
         else:  # the canvas itself, or what was shown is gone
             await self._show_canvas(self.store.canvas, Active("painted", None))
 
+    async def _record_playing(self, mode: str) -> None:
+        """Let store.active name what plays when it is not ours, so it can come back."""
+        if mode == "effect":
+            self.store.active = Active("builtin", str(await self.client.get_current_effect()))
+        elif mode == "movie":
+            movie = await self._playing_movie(await self._movie_state())
+            if movie and movie.unique_id not in self.store.our_movies:
+                self.store.active = Active("app_movie", movie.unique_id)
+        elif mode in ("playlist", "color", "demo"):
+            self.store.active = Active("device_mode", mode)
+
+    async def _playing_movie(self, movies: MovieState) -> DeviceMovie | None:
+        """The movie movies/current names; in movie mode only (a stale id in other modes)."""
+        movie_id = (await self.client.get_current_movie()).get("id")
+        return next((m for m in movies.movies if m.id == movie_id), None)
+
     async def _movie_state(self) -> MovieState:
-        return MovieState.from_api(await self.client.get_movies(), self.info.max_movies)
+        data = await self.client.get_movies()
+        try:
+            return MovieState.from_api(data, self.info.max_movies)
+        except (KeyError, TypeError, ValueError) as err:  # a malformed movie entry
+            raise TwinklyResponseError(None, "Twinkly sent an unexpected movie list") from err
 
     async def _upload(self, frames: list[bytes], fps: int) -> None:
         """Store frames as our newest movie and play it.
@@ -366,6 +410,7 @@ class TwinklyDevice:
                 )
                 if attempt or not lost_token:
                     raise
+                _LOGGER.debug("Token lost during an upload, starting it again: %s", err)
             else:
                 if attempt or self.client.token_epoch == epoch:
                     return
@@ -385,7 +430,7 @@ class TwinklyDevice:
             self.store.remove_our_movie(listed_uid)
         uid = str(uuid.uuid4())
         self.store.add_our_movie(uid)  # before it exists: no movie of ours goes untracked
-        movie = await self.client.new_movie(
+        reply = await self.client.new_movie(
             self.store.next_movie_name(),
             uid,
             len(frames),
@@ -393,18 +438,29 @@ class TwinklyDevice:
             self.info.led_count,
             f"{self.info.profile.lower()}_raw",
         )
-        await self.client.upload_movie(b"".join(frames))
-        await self.client.set_current_movie(movie["id"])
+        await self.client.upload_movie(b"".join(frames))  # must directly follow movies/new
+        if (movie_id := reply.get("id")) is None:  # find our movie by its uid instead
+            listed = await self._movie_state()
+            movie_id = next((m.id for m in listed.movies if m.unique_id == uid), None)
+            if movie_id is None:
+                raise TwinklyResponseError(
+                    None, "Twinkly sent no id for the new movie and does not list it"
+                )
+        await self.client.set_current_movie(movie_id)
         await self._set_mode("movie")
         self.store.current_movie_uid = uid
 
     async def _send_rt(self, frame: bytes) -> None:
-        """Show one real-time frame; enters rt mode unless our last frame still holds it."""
-        now = self.hass.loop.time()
-        if now >= self._rt_until:
+        """Show one real-time frame; enters rt mode unless our last frame still holds it.
+
+        A login since our last frame (another client took the token) may have ended rt.
+        """
+        now, epoch = self.hass.loop.time(), self.client.token_epoch
+        if now >= self._rt_until or epoch != self._rt_epoch:
             await self.client.set_mode("rt")
         await self.client.send_rt_frame(frame)
-        self._rt_until = now + RT_TIMEOUT_SECONDS
+        # The epoch from before these calls: a login during them enters rt at the next frame
+        self._rt_until, self._rt_epoch = now + RT_TIMEOUT_SECONDS, epoch
 
     async def _set_mode(self, mode: str) -> None:
         self._rt_until = 0.0  # any other mode ends rt

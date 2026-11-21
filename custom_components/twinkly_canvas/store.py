@@ -25,7 +25,15 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_VERSION = 1
 SAVE_DELAY = 1.0
 LOOK_NAME_MAX = 40
-ACTIVE_TYPES = ("painted", "custom_effect", "look", "builtin", "app_movie", "off")
+ACTIVE_TYPES = (
+    "painted",
+    "custom_effect",
+    "look",
+    "builtin",
+    "app_movie",
+    "device_mode",  # app content HA cannot name; ref is the mode: playlist, color or demo
+    "off",
+)
 
 
 @dataclass(frozen=True)
@@ -53,8 +61,16 @@ class Active:
             raise ValueError(f"Unknown active type: {self.type!r}")
 
 
-def _effect(data: dict | None) -> EffectSpec | None:
-    return EffectSpec.from_dict(data) if data else None
+def _effect(data: dict | None, led_count: int) -> tuple[EffectSpec | None, bool]:
+    """A stored effect without its LEDs from led_count on, None when none are left.
+
+    True when it lost LEDs.
+    """
+    if not data:
+        return None, False
+    leds = [i for i in data["leds"] if i < led_count]
+    spec = EffectSpec.from_dict({**data, "leds": leds}) if leds else None
+    return spec, len(leds) != len(data["leds"])
 
 
 def _look_name(name: str) -> str:
@@ -104,18 +120,20 @@ class CanvasStore:
         if (data := await self._store.async_load()) is None:
             return
         self._canvas, fitted = _fitted(self.led_count, data["canvas"])
+        self._custom_effect, effect_fitted = _effect(data["custom_effect"], self.led_count)
+        fitted |= effect_fitted
         self.looks = {}
         for name, look in data["looks"].items():
-            canvas, look_fitted = _fitted(self.led_count, look["canvas"])
-            fitted |= look_fitted
-            self.looks[name] = Look(name, canvas, _effect(look["effect"]))
+            canvas, canvas_fitted = _fitted(self.led_count, look["canvas"])
+            effect, effect_fitted = _effect(look["effect"], self.led_count)
+            fitted |= canvas_fitted or effect_fitted
+            self.looks[name] = Look(name, canvas, effect)
         if fitted:
             _LOGGER.warning(
-                "Stored canvases were made for another LED count: cut or padded with off to %s LEDs",
+                "Stored canvases or effects were made for another LED count: fitted to %s LEDs",
                 self.led_count,
             )
         self.groups = data["groups"]
-        self._custom_effect = _effect(data["custom_effect"])
         self.our_movies = data["our_movies"]
         self._current_movie_uid = data["current_movie_uid"]
         self._active = Active(**data["active"])
@@ -210,6 +228,10 @@ class CanvasStore:
         self._movie_counter += 1
         self._save()
         return movie_name(self._movie_counter)
+
+    async def async_flush(self) -> None:
+        """Write now; this replaces a delayed save still pending."""
+        await self._store.async_save(self._data())
 
     async def async_remove(self) -> None:
         await self._store.async_remove()

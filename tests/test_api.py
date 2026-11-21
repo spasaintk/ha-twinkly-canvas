@@ -127,6 +127,9 @@ async def test_not_a_twinkly_reply_raises(client, aioclient_mock, reply):
         ("fw/version", "firmware_version"),
         ("led/out/brightness", "get_brightness"),
         ("led/effects/current", "get_current_effect"),
+        ("led/mode", "get_mode"),
+        ("led/effects", "get_effects"),
+        ("movies", "get_movies"),
     ],
 )
 async def test_reply_without_field_raises(client, aioclient_mock, path, method):

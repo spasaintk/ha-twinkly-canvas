@@ -34,13 +34,6 @@ class TwinklyResponseError(TwinklyError):
         self.code = code
 
 
-def _field(reply: dict, key: str, request: str) -> Any:
-    """reply[key]; a reply without it raises TwinklyResponseError, never KeyError."""
-    if key not in reply:
-        raise TwinklyResponseError(None, f"Twinkly left {key!r} out of its reply to {request}")
-    return reply[key]
-
-
 class TwinklyClient:
     """One device. Logs in on the first authenticated call, and once more after a 401."""
 
@@ -93,14 +86,33 @@ class TwinklyClient:
             raise TwinklyResponseError(code, f"Twinkly answered code {code} to {method} {path}")
         return reply
 
+    async def _read(
+        self, method: str, path: str, *keys: str, auth: bool = True, **kwargs: Any
+    ) -> dict:
+        """A request whose reply must hold keys; one left out raises TwinklyResponseError."""
+        reply = await (self._call if auth else self._send)(method, path, **kwargs)
+        for key in keys:
+            if key not in reply:
+                raise TwinklyResponseError(
+                    None, f"Twinkly left {key!r} out of its reply to {method} {path}"
+                )
+        return reply
+
     async def _login(self, seen_epoch: int) -> None:
         async with self._login_lock:
             if self.token_epoch != seen_epoch:
                 return  # another call logged in while this one waited
             challenge = base64.b64encode(secrets.token_bytes(32)).decode()
-            reply = await self._send("POST", "login", json={"challenge": challenge})
-            token = _field(reply, "authentication_token", "POST login")
-            response = _field(reply, "challenge-response", "POST login")
+            reply = await self._read(
+                "POST",
+                "login",
+                "authentication_token",
+                "challenge-response",
+                auth=False,
+                json={"challenge": challenge},
+            )
+            token = reply["authentication_token"]
+            response = reply["challenge-response"]
             await self._send("POST", "verify", token, json={"challenge-response": response})
             self._token = token
             self.token_epoch += 1
@@ -124,22 +136,22 @@ class TwinklyClient:
         return await self._send("GET", "gestalt")
 
     async def firmware_version(self) -> str:
-        return _field(await self._send("GET", "fw/version"), "version", "GET fw/version")
+        return (await self._read("GET", "fw/version", "version", auth=False))["version"]
 
     async def led_config(self) -> dict:
         return await self._call("GET", "led/config")
 
     async def get_mode(self) -> dict:
-        return await self._call("GET", "led/mode")
+        return await self._read("GET", "led/mode", "mode")
 
     async def set_mode(self, mode: str) -> None:
         await self._call("POST", "led/mode", json={"mode": mode})
 
     async def get_brightness(self) -> int:
-        reply = await self._call("GET", "led/out/brightness")
+        reply = await self._read("GET", "led/out/brightness", "value")
         if reply.get("mode") == "disabled":
             return 100  # not dimmed
-        return _field(reply, "value", "GET led/out/brightness")
+        return reply["value"]
 
     async def set_brightness(self, value: int) -> None:
         """Value 1-100."""
@@ -148,17 +160,16 @@ class TwinklyClient:
         )
 
     async def get_effects(self) -> dict:
-        return await self._call("GET", "led/effects")
+        return await self._read("GET", "led/effects", "effects_number")
 
     async def get_current_effect(self) -> int:
-        reply = await self._call("GET", "led/effects/current")
-        return _field(reply, "preset_id", "GET led/effects/current")
+        return (await self._read("GET", "led/effects/current", "preset_id"))["preset_id"]
 
     async def set_effect(self, effect_id: int) -> None:
         await self._call("POST", "led/effects/current", json={"effect_id": effect_id})
 
     async def get_movies(self) -> dict:
-        return await self._call("GET", "movies")
+        return await self._read("GET", "movies", "movies", "available_frames", "max_capacity")
 
     async def get_current_movie(self) -> dict:
         return await self._call("GET", "movies/current")

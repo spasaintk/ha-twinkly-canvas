@@ -58,13 +58,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
 async def async_unload_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> bool:
     await hass.config_entries.async_unload_platforms_or_raise(entry, PLATFORMS)
     await entry.runtime_data.device.async_shutdown()
+    await entry.runtime_data.store.async_flush()  # a reload right after loads every change
     return True
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> None:
     """Delete the stored canvas, groups and looks."""
-    # shortcut: a save still pending from the last second of use can write the file
-    # again; flush the store on unload if that ever matters.
+    # Unloading flushed the store, so no delayed save can write the file again after this.
     await CanvasStore(hass, entry.entry_id, 0).async_remove()
 
 

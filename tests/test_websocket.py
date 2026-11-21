@@ -182,6 +182,106 @@ async def test_paint_not_live_then_commit(
     assert _attr(hass, "effect") == "Painted"
 
 
+async def _light(hass: HomeAssistant, service: str) -> None:
+    """The light's own turn_on or turn_off, as a dashboard toggle calls it."""
+    await hass.services.async_call("light", service, {"entity_id": ENTITY}, blocking=True)
+
+
+async def test_live_then_not_live_then_commit(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "paint", leds=[0], color=list(RED))
+    await _advance(hass, 0.6)
+    await _ok(ws, "paint", leds=[1], color=list(WARM), live=False)
+    await _ok(ws, "commit")
+    assert store.canvas.pixels[:3] == [RED, WARM, OFF]
+    assert fake.playing.data == store.canvas.to_frame("RGBW")
+
+
+async def test_live_then_not_live_then_timer(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "paint", leds=[0], color=list(RED))
+    await _advance(hass, 0.6)
+    await _ok(ws, "paint", leds=[1], color=list(WARM), live=False)
+    await _advance(hass, 3)  # painting paused: stored on the lights
+    assert store.canvas.pixels[:3] == [RED, WARM, OFF]
+    assert fake.playing.data == store.canvas.to_frame("RGBW")
+    uploads = fake.calls.count("new_movie")
+    await _ok(ws, "commit")
+    assert fake.calls.count("new_movie") == uploads  # the lights already show it
+
+
+async def test_turn_off_during_live_keeps_painting(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "builtin", effect_id=2)  # what played before the painting
+    await _ok(ws, "paint", leds=[0], color=list(RED))
+    await _light(hass, "turn_off")  # at once: before even the live frame
+    await _light(hass, "turn_on")
+    assert store.canvas.pixels[0] == RED
+    assert fake.playing.data == store.canvas.to_frame("RGBW")
+    assert store.active == Active("painted", None)
+
+
+@pytest.mark.parametrize(("command", "data"), [("commit", {}), ("effect/play", {"spec": CHASE})])
+async def test_failed_upload_forgets_movie(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+    command: str,
+    data: dict,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "paint", leds=[0], color=list(RED), live=False)
+    await _ok(ws, "commit")
+    older = fake.playing
+    fake.add_app_movie("Later", 10)  # only the last movie can go: the older one stays
+    fake.fail_upload = True
+    await _ok(ws, "paint", leds=[1], color=list(WARM), live=False)
+    assert (await _error(ws, command, **data))["code"] == "device_error"
+    assert store.current_movie_uid is None
+
+    fake.fail_upload = False
+    await _light(hass, "turn_off")
+    await _light(hass, "turn_on")
+    assert fake.playing is not older
+    assert fake.playing.data == store.canvas.to_frame("RGBW")
+
+
+async def test_app_movie_refuses_ours(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    ws: MockHAClientWebSocket,
+) -> None:
+    store = entry.runtime_data.store
+    await _ok(ws, "paint", leds=[0], color=list(RED), live=False)
+    await _ok(ws, "commit")  # our movie: id 7
+    ours = fake.playing
+    await _ok(ws, "paint", leds=[1], color=list(WARM))  # live: a commit is pending
+    calls = len(fake.calls)
+    error = await _error(ws, "app_movie", movie_id=7)
+    assert error == {"code": "invalid_format", "message": 'These lights have no effect "7"'}
+    assert fake.calls[calls:] == ["get_movies"]  # looked up, nothing changed
+    assert (fake.playing, store.active) == (ours, Active("painted", None))
+    await _advance(hass, 3)  # the pending painting was kept
+    assert fake.playing.data == store.canvas.to_frame("RGBW")
+
+
 async def test_find(
     hass: HomeAssistant,
     entry: MockConfigEntry,

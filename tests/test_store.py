@@ -270,6 +270,41 @@ async def test_load_fits_canvases_to_led_count(
     assert len(warnings) == 1
 
 
+@pytest.mark.parametrize(("leds", "kept"), [(range(400), range(300)), (range(300, 400), None)])
+async def test_load_fits_effects_to_led_count(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    leds: range,
+    kept: range | None,
+) -> None:
+    """Stored effects lose the LEDs a device no longer has; one left without LEDs goes."""
+    effect = EffectSpec("chase", tuple(leds)).to_dict()
+    hass_storage[KEY] = {
+        "version": 1,
+        "data": {
+            "canvas": Canvas(300).to_b64(),
+            "groups": {},
+            "looks": {"Top": {"canvas": Canvas(300).to_b64(), "effect": effect}},
+            "custom_effect": effect,
+            "our_movies": [],
+            "current_movie_uid": None,
+            "active": {"type": "custom_effect", "ref": None},
+            "movie_counter": 0,
+        },
+    }
+    store = CanvasStore(hass, ENTRY_ID, 300)
+    await store.async_load()
+    fitted = EffectSpec("chase", tuple(kept)) if kept else None
+    assert (store.custom_effect, store.looks["Top"].effect) == (fitted, fitted)
+    warnings = [
+        r
+        for r in caplog.records
+        if r.name == "custom_components.twinkly_canvas.store" and r.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
+
+
 async def test_next_movie_name_increments(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],

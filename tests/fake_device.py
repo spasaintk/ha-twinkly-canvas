@@ -68,8 +68,8 @@ def _device_call(auth: bool = True) -> Callable[[Callable], Callable]:
             if auth and not fake.logged_in:
                 await fake.login()
             result = await func(fake, *args, **kwargs)
-            if fake.steal_after == func.__name__:
-                fake.steal_after = None
+            if fake.steal_after and fake.steal_after[0] == func.__name__:
+                fake.steal_after.pop(0)
                 fake.logged_in = False  # another client logged in: our token is dead
             return result
 
@@ -89,21 +89,24 @@ class FakeTwinkly:
         self.max_movies = 55
         self.movies: list[FakeMovie] = []
         self.current: FakeMovie | None = None
-        self.rt_frames: list[bytes] = []
+        self.rt_frames: list[bytes] = []  # the real-time frames shown
+        self.dropped_rt_frames = 0  # sent outside rt mode: not shown
         self.calls: list[str] = []  # method names, in call order
         self.token_epoch = 0
         self.logged_in = False
         self.fail_with_connection_error = False
-        self.steal_after: str | None = None
+        self.fail_upload = False  # movies/full answers an error
+        self.omit_new_movie_id = False  # movies/new answers without "id"
+        self.steal_after: list[str] = []
         self._pending: FakeMovie | None = None  # created by movies/new, waiting for movies/full
         for n, frames in enumerate(APP_MOVIE_FRAMES, 1):
             self.add_app_movie(f"App movie {n}", frames)
 
     # Test hooks
 
-    def steal_token_after(self, call_name: str) -> None:
-        """Another client logs in right after the next call of that name."""
-        self.steal_after = call_name
+    def steal_token_after(self, *call_names: str) -> None:
+        """Another client logs in right after the next call of each name, in turn."""
+        self.steal_after = list(call_names)
 
     def add_app_movie(self, name: str, frames: int) -> FakeMovie:
         """A movie stored by the Twinkly app, appended to the list."""
@@ -245,13 +248,18 @@ class FakeTwinkly:
         movie = FakeMovie(name, unique_id.upper(), frames, fps)
         self.movies.append(movie)
         self._pending = movie
-        return {"id": len(self.movies) - 1, "unique_id": movie.unique_id, "code": 1000}
+        reply = {"id": len(self.movies) - 1, "unique_id": movie.unique_id, "code": 1000}
+        if self.omit_new_movie_id:
+            del reply["id"]
+        return reply
 
     @_device_call()
     async def upload_movie(self, data: bytes) -> dict:
         movie, self._pending = self._pending, None
         if movie is None:
             raise TwinklyResponseError(1001, "movies/full without movies/new")
+        if self.fail_upload:  # the movie stays half-created, like after a lost token
+            raise TwinklyResponseError(1102, "Upload failed")
         if len(data) != movie.frames * FRAME_BYTES:
             raise TwinklyResponseError(1106, "Frame data does not match frames_number")
         movie.data = data
@@ -274,4 +282,7 @@ class FakeTwinkly:
     async def send_rt_frame(self, data: bytes) -> None:
         if len(data) != FRAME_BYTES:
             raise TwinklyResponseError(1106, "Wrong frame size")
-        self.rt_frames.append(data)
+        if self.mode == "rt":
+            self.rt_frames.append(data)
+        else:  # answered OK, but only rt mode shows the frame
+            self.dropped_rt_frames += 1
