@@ -176,6 +176,18 @@ def test_twinkle_in_its_own_colour_dims(stripes: Canvas) -> None:
     assert 0.25 * 192 <= min(reds) <= 0.35 * 192
 
 
+@pytest.mark.parametrize("kind", ["twinkle", "breathe"])
+def test_colour_changes_blend_in_a_straight_line(kind: str, stripes: Canvas) -> None:
+    """Red to silver blends in linear light: R falls as G rises, with no dark middle."""
+    colors = (RED, SILVER) if kind == "breathe" else (SILVER,)
+    frames = render(EffectSpec(kind, (1,), colors, speed=1), stripes, DEVICE_FPS)
+    pixels = [_led(frame, 1) for frame in frames]  # W, R, G, B of LED 2 (red)
+    assert max(g for _, _, g, _ in pixels) > 150  # the blend really happens
+    for _, r, g, b in pixels:
+        assert g == b
+        assert abs(r - (255 - 63 * g / 192)) <= 1.5
+
+
 def test_comet_tail_keeps_its_shape() -> None:
     """The tail dims in even steps to the eye (gamma 2.2), value for value as in 0.1.0."""
     for v in range(256):
