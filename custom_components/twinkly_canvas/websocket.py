@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from typing import Any
 
+import voluptuous as vol
 from homeassistant.auth.permissions.const import POLICY_CONTROL, POLICY_READ
 from homeassistant.components import websocket_api
 from homeassistant.components.light.const import DATA_COMPONENT as LIGHT_ENTITIES
@@ -21,7 +22,6 @@ from homeassistant.exceptions import (
     Unauthorized,
 )
 from homeassistant.helpers import config_validation as cv
-import voluptuous as vol
 
 from .canvas import Canvas
 from .colors import NAMED_COLORS
@@ -85,7 +85,9 @@ def _command(
             try:
                 result = await func(light, msg)
             except (ServiceValidationError, ValueError, KeyError) as err:
-                connection.send_error(msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err))
+                connection.send_error(
+                    msg["id"], websocket_api.ERR_INVALID_FORMAT, str(err)
+                )
             except HomeAssistantError as err:
                 connection.send_error(msg["id"], "device_error", str(err))
             else:
@@ -149,7 +151,9 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
                 "canvas": look.canvas.to_b64(),
                 "effect": look.effect.to_dict() if look.effect else None,
             }
-            for look in sorted(store.looks.values(), key=lambda look: look.name.casefold())
+            for look in sorted(
+                store.looks.values(), key=lambda look: look.name.casefold()
+            )
         ],
         "custom_effect": store.custom_effect.to_dict() if store.custom_effect else None,
         "builtins": state.effects_count,
@@ -159,7 +163,9 @@ async def _state(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, An
             if m.unique_id not in store.our_movies
         ],
         "memory": {
-            "used_pct": 100 * used / movies.max_capacity if movies.max_capacity > 0 else 0,
+            "used_pct": 100 * used / movies.max_capacity
+            if movies.max_capacity > 0
+            else 0,
             "available_frames": movies.available_frames,
             "max_capacity": movies.max_capacity,
             "movies": len(movies.movies),
@@ -203,11 +209,15 @@ async def _find(light: TwinklyCanvasLight, msg: dict[str, Any]) -> None:
 
 
 @_command("effect/render", _SPEC)
-async def _effect_render(light: TwinklyCanvasLight, msg: dict[str, Any]) -> dict[str, Any]:
+async def _effect_render(
+    light: TwinklyCanvasLight, msg: dict[str, Any]
+) -> dict[str, Any]:
     """Frames for the card's preview; nothing goes to the lights."""
     spec = light.effect_spec(**_effect_args(msg["spec"]))
     fps = light.device.fps
-    frames = await light.hass.async_add_executor_job(_preview, spec, light.store.canvas, fps)
+    frames = await light.hass.async_add_executor_job(
+        _preview, spec, light.store.canvas, fps
+    )
     return {"fps": fps, "frames": frames}
 
 

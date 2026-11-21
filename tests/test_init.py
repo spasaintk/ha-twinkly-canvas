@@ -2,14 +2,18 @@
 
 from unittest.mock import AsyncMock
 
+import pytest
 from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import (
     device_registry as dr,
+)
+from homeassistant.helpers import (
     entity_registry as er,
+)
+from homeassistant.helpers import (
     issue_registry as ir,
 )
-import pytest
 from pytest_homeassistant.common import (
     MockConfigEntry,
     MockModule,
@@ -34,7 +38,9 @@ async def test_setup_and_unload(
     assert entry.state is ConfigEntryState.LOADED
     assert hass.states.get("light.test_tree") is not None
     assert entity_registry.async_get("light.test_tree").unique_id == f"{MAC}_light"
-    device = device_registry.async_get_device_by_identifier((DOMAIN, MAC), entry.entry_id)
+    device = device_registry.async_get_device_by_identifier(
+        (DOMAIN, MAC), entry.entry_id
+    )
     assert device.connections == {(dr.CONNECTION_NETWORK_MAC, MAC)}
     assert (device.manufacturer, device.model, device.name) == (
         "Twinkly",
@@ -63,9 +69,13 @@ async def test_unload_cancels_pending_commit(
     assert fake.rt_frames == []  # the debounced preview frame never went out either
 
 
-async def test_unload_saves_store_at_once(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+async def test_unload_saves_store_at_once(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> None:
     entry.runtime_data.store.save_group("Top", "1-10")
-    assert await hass.config_entries.async_unload(entry.entry_id)  # within the 1 s delay
+    assert await hass.config_entries.async_unload(
+        entry.entry_id
+    )  # within the 1 s delay
     store = CanvasStore(hass, entry.entry_id, 400)
     await store.async_load()
     assert store.groups == {"Top": "1-10"}
@@ -102,7 +112,9 @@ async def test_core_twinkly_issue(
     fake: FakeTwinkly,
     issue_registry: ir.IssueRegistry,
 ) -> None:
-    core = MockConfigEntry(domain="twinkly", unique_id="AA-BB-CC-00-11-22")  # same device
+    core = MockConfigEntry(
+        domain="twinkly", unique_id="AA-BB-CC-00-11-22"
+    )  # same device
     core.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     issue_id = f"core_twinkly_conflict_{config_entry.entry_id}"

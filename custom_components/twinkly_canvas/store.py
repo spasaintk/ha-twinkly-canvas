@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import logging
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -15,6 +15,8 @@ from .effects import EffectSpec
 from .movies import movie_name
 from .selection import (  # GROUP_NAME_MAX: re-export
     GROUP_NAME_MAX as GROUP_NAME_MAX,
+)
+from .selection import (
     parse_selection,
     validate_group_name,
 )
@@ -105,11 +107,15 @@ class CanvasStore:
         if (data := await self._store.async_load()) is None:
             return
         self._canvas, fitted = Canvas.from_b64_fitted(self.led_count, data["canvas"])
-        self._custom_effect, effect_fitted = _effect(data["custom_effect"], self.led_count)
+        self._custom_effect, effect_fitted = _effect(
+            data["custom_effect"], self.led_count
+        )
         fitted |= effect_fitted
         self.looks = {}
         for name, look in data["looks"].items():
-            canvas, canvas_fitted = Canvas.from_b64_fitted(self.led_count, look["canvas"])
+            canvas, canvas_fitted = Canvas.from_b64_fitted(
+                self.led_count, look["canvas"]
+            )
             effect, effect_fitted = _effect(look["effect"], self.led_count)
             fitted |= canvas_fitted or effect_fitted
             self.looks[name] = Look(name, canvas, effect)

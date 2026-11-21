@@ -22,7 +22,9 @@ class Canvas:
 
     def __init__(self, led_count: int, pixels: list[RGBW] | None = None) -> None:
         self.led_count = led_count
-        self.pixels: list[RGBW] = list(pixels) if pixels is not None else [OFF] * led_count
+        self.pixels: list[RGBW] = (
+            list(pixels) if pixels is not None else [OFF] * led_count
+        )
         if len(self.pixels) != led_count:
             raise ValueError(f"{len(self.pixels)} pixels given for {led_count} LEDs")
 
@@ -67,4 +69,8 @@ class Canvas:
 
     def uniform_color(self) -> RGBW | None:
         first = self.pixels[0] if self.pixels else None
-        return first if first is not None and all(p == first for p in self.pixels) else None
+        return (
+            first
+            if first is not None and all(p == first for p in self.pixels)
+            else None
+        )

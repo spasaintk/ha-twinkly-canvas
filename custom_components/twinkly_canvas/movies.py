@@ -71,7 +71,10 @@ def plan_upload(state: MovieState, ours: set[str], new_frames: int) -> UploadPla
     """Delete our trailing movies (last first) if that makes room for new_frames."""
     run = _tail_run(state, ours)
     freed = sum(m.frames + MOVIE_OVERHEAD_FRAMES for m in run)
-    if state.available_frames + freed < new_frames + MOVIE_OVERHEAD_FRAMES + MOVIE_MARGIN_FRAMES:
+    if (
+        state.available_frames + freed
+        < new_frames + MOVIE_OVERHEAD_FRAMES + MOVIE_MARGIN_FRAMES
+    ):
         return UploadPlan((), False, "memory_full")
     if len(state.movies) - len(run) >= state.max_movies:
         return UploadPlan((), False, "too_many_movies")

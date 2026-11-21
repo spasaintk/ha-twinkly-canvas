@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from http import HTTPStatus
 import re
 import secrets
+from http import HTTPStatus
 from typing import Any
 
 import aiohttp
@@ -37,13 +37,17 @@ class TwinklyResponseError(TwinklyError):
 class TwinklyClient:
     """One device. Logs in on the first authenticated call, and once more after a 401."""
 
-    def __init__(self, host: str, session: aiohttp.ClientSession, timeout: float = 10.0) -> None:
+    def __init__(
+        self, host: str, session: aiohttp.ClientSession, timeout: float = 10.0
+    ) -> None:
         self._base = f"http://{host}/xled/v1"
         self._session = session
         self._timeout = timeout
         self._token: str | None = None
         self._login_lock = asyncio.Lock()
-        self.token_epoch = 0  # +1 per successful login, so callers can tell the token changed
+        self.token_epoch = (
+            0  # +1 per successful login, so callers can tell the token changed
+        )
 
     async def _send(
         self,
@@ -72,18 +76,25 @@ class TwinklyClient:
                     raise TwinklyAuthError(f"{method} {path}: token rejected")
                 if resp.status != HTTPStatus.OK:
                     raise TwinklyResponseError(
-                        resp.status, f"Twinkly answered code {resp.status} to {method} {path}"
+                        resp.status,
+                        f"Twinkly answered code {resp.status} to {method} {path}",
                     )
                 reply = await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError) as err:
             # str(), never repr(): the repr of some aiohttp errors holds the request headers.
             reason = str(err) or type(err).__name__
             raise TwinklyConnectionError(f"{method} {path}: {reason}") from err
-        except ValueError as err:  # not JSON, so not a Twinkly reply (a wrong host, say)
-            raise TwinklyResponseError(None, f"Not a Twinkly reply to {method} {path}") from err
+        except (
+            ValueError
+        ) as err:  # not JSON, so not a Twinkly reply (a wrong host, say)
+            raise TwinklyResponseError(
+                None, f"Not a Twinkly reply to {method} {path}"
+            ) from err
         code = reply.get("code") if isinstance(reply, dict) else None
         if code != 1000:
-            raise TwinklyResponseError(code, f"Twinkly answered code {code} to {method} {path}")
+            raise TwinklyResponseError(
+                code, f"Twinkly answered code {code} to {method} {path}"
+            )
         return reply
 
     async def _read(
@@ -113,7 +124,9 @@ class TwinklyClient:
             )
             token = reply["authentication_token"]
             response = reply["challenge-response"]
-            await self._send("POST", "verify", token, json={"challenge-response": response})
+            await self._send(
+                "POST", "verify", token, json={"challenge-response": response}
+            )
             self._token = token
             self.token_epoch += 1
 
@@ -126,7 +139,9 @@ class TwinklyClient:
             return await self._send(method, path, self._token, **kwargs)
         except TwinklyAuthError:
             await self._login(epoch)
-        return await self._send(method, path, self._token, **kwargs)  # a second 401 raises
+        return await self._send(
+            method, path, self._token, **kwargs
+        )  # a second 401 raises
 
     async def login(self) -> None:
         """Get and verify a new token; the device then rejects every older one."""
@@ -156,20 +171,26 @@ class TwinklyClient:
     async def set_brightness(self, value: int) -> None:
         """Value 1-100."""
         await self._call(
-            "POST", "led/out/brightness", json={"mode": "enabled", "type": "A", "value": value}
+            "POST",
+            "led/out/brightness",
+            json={"mode": "enabled", "type": "A", "value": value},
         )
 
     async def get_effects(self) -> dict:
         return await self._read("GET", "led/effects", "effects_number")
 
     async def get_current_effect(self) -> int:
-        return (await self._read("GET", "led/effects/current", "preset_id"))["preset_id"]
+        return (await self._read("GET", "led/effects/current", "preset_id"))[
+            "preset_id"
+        ]
 
     async def set_effect(self, effect_id: int) -> None:
         await self._call("POST", "led/effects/current", json={"effect_id": effect_id})
 
     async def get_movies(self) -> dict:
-        return await self._read("GET", "movies", "movies", "available_frames", "max_capacity")
+        return await self._read(
+            "GET", "movies", "movies", "available_frames", "max_capacity"
+        )
 
     async def get_current_movie(self) -> dict:
         return await self._call("GET", "movies/current")
@@ -178,7 +199,13 @@ class TwinklyClient:
         await self._call("POST", "movies/current", json={"id": movie_id})
 
     async def new_movie(
-        self, name: str, unique_id: str, frames: int, fps: int, leds: int, descriptor: str
+        self,
+        name: str,
+        unique_id: str,
+        frames: int,
+        fps: int,
+        leds: int,
+        descriptor: str,
     ) -> dict:
         """Create a movie entry; upload_movie() must follow directly with its frames."""
         return await self._call(
@@ -196,7 +223,9 @@ class TwinklyClient:
 
     async def upload_movie(self, data: bytes) -> dict:
         # 20 KB/s worst case; the device managed about 51 KB/s.
-        return await self._call("POST", "movies/full", data=data, timeout=10 + len(data) / 20000)
+        return await self._call(
+            "POST", "movies/full", data=data, timeout=10 + len(data) / 20000
+        )
 
     async def delete_movie(self, unique_id: str) -> None:
         # Plain ids only: "", ".", "?" or "#" would turn into DELETE /movies/ (wipes every movie).

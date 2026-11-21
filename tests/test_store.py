@@ -4,9 +4,9 @@ import logging
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
-import pytest
 from pytest_homeassistant.common import async_fire_time_changed_exact
 
 from custom_components.twinkly_canvas.canvas import OFF, Canvas
@@ -219,7 +219,9 @@ async def test_look_names_unique_ignoring_case(
     store = await _load(hass)
     store.save_look(Look("Xmas", Canvas(LEDS, [RED] * LEDS), None))
     store.active = Active("look", "Xmas")
-    store.save_look(Look("XMAS", Canvas(LEDS), None))  # replaces it under the new spelling
+    store.save_look(
+        Look("XMAS", Canvas(LEDS), None)
+    )  # replaces it under the new spelling
     assert list(store.looks) == ["XMAS"]
     assert store.looks["XMAS"].canvas.pixels == [OFF] * LEDS
     assert store.active == Active("look", "XMAS")
@@ -290,7 +292,9 @@ async def test_load_fits_canvases_to_led_count(
         "data": {
             "canvas": Canvas(300, stored).to_b64(),
             "groups": {},
-            "looks": {"Big": {"canvas": Canvas(500, [RED] * 500).to_b64(), "effect": None}},
+            "looks": {
+                "Big": {"canvas": Canvas(500, [RED] * 500).to_b64(), "effect": None}
+            },
             "custom_effect": None,
             "our_movies": [],
             "current_movie_uid": None,
@@ -305,12 +309,15 @@ async def test_load_fits_canvases_to_led_count(
     warnings = [
         r
         for r in caplog.records
-        if r.name == "custom_components.twinkly_canvas.store" and r.levelno == logging.WARNING
+        if r.name == "custom_components.twinkly_canvas.store"
+        and r.levelno == logging.WARNING
     ]
     assert len(warnings) == 1
 
 
-@pytest.mark.parametrize(("leds", "kept"), [(range(400), range(300)), (range(300, 400), None)])
+@pytest.mark.parametrize(
+    ("leds", "kept"), [(range(400), range(300)), (range(300, 400), None)]
+)
 async def test_load_fits_effects_to_led_count(
     hass: HomeAssistant,
     hass_storage: dict[str, Any],
@@ -340,7 +347,8 @@ async def test_load_fits_effects_to_led_count(
     warnings = [
         r
         for r in caplog.records
-        if r.name == "custom_components.twinkly_canvas.store" and r.levelno == logging.WARNING
+        if r.name == "custom_components.twinkly_canvas.store"
+        and r.levelno == logging.WARNING
     ]
     assert len(warnings) == 1
 

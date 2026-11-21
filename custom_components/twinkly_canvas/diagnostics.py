@@ -12,7 +12,15 @@ from .coordinator import TwinklyCanvasConfigEntry
 from .movies import stranded
 
 TO_REDACT = {
-    "host", "mac", "uuid", "hw_id", "device_name", "unique_id", "name", "copyright", "ip",
+    "host",
+    "mac",
+    "uuid",
+    "hw_id",
+    "device_name",
+    "unique_id",
+    "name",
+    "copyright",
+    "ip",
     "listed_uid",  # the device-spelled movie id, same data as unique_id
 }
 

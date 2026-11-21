@@ -10,13 +10,13 @@ advance() is the clock helper the tests share.
 
 from __future__ import annotations
 
+import functools
+import re
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-import functools
-import re
 from typing import Any
-import uuid
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -112,7 +112,9 @@ class FakeTwinkly:
         self.fail_upload = False  # movies/full answers an error
         self.omit_new_movie_id = False  # movies/new answers without "id"
         self.steal_after: list[str] = []
-        self._pending: FakeMovie | None = None  # created by movies/new, waiting for movies/full
+        self._pending: FakeMovie | None = (
+            None  # created by movies/new, waiting for movies/full
+        )
         for n, frames in enumerate(APP_MOVIE_FRAMES, 1):
             self.add_app_movie(f"App movie {n}", frames)
 
@@ -125,7 +127,11 @@ class FakeTwinkly:
     def add_app_movie(self, name: str, frames: int) -> FakeMovie:
         """A movie stored by the Twinkly app, appended to the list."""
         movie = FakeMovie(
-            name, str(uuid.uuid4()).upper(), frames, 11, bytes(frames * self.frame_bytes)
+            name,
+            str(uuid.uuid4()).upper(),
+            frames,
+            11,
+            bytes(frames * self.frame_bytes),
         )
         self.movies.append(movie)
         return movie
@@ -146,11 +152,17 @@ class FakeTwinkly:
     async def login(self) -> None:
         self.token_epoch += 1
         self.logged_in = True
-        self._pending = None  # a new session: frames for an earlier movies/new are refused
+        self._pending = (
+            None  # a new session: frames for an earlier movies/new are refused
+        )
 
     @_device_call(auth=False)
     async def gestalt(self) -> dict:
-        return {**GESTALT, "led_profile": self.profile, "bytes_per_led": len(self.profile)}
+        return {
+            **GESTALT,
+            "led_profile": self.profile,
+            "bytes_per_led": len(self.profile),
+        }
 
     @_device_call(auth=False)
     async def firmware_version(self) -> str:
@@ -246,7 +258,13 @@ class FakeTwinkly:
 
     @_device_call()
     async def new_movie(
-        self, name: str, unique_id: str, frames: int, fps: int, leds: int, descriptor: str
+        self,
+        name: str,
+        unique_id: str,
+        frames: int,
+        fps: int,
+        leds: int,
+        descriptor: str,
     ) -> dict:
         try:
             uuid.UUID(unique_id)
@@ -281,7 +299,9 @@ class FakeTwinkly:
 
     @_device_call()
     async def delete_movie(self, unique_id: str) -> None:
-        if not re.fullmatch(r"[0-9A-Za-z-]+", unique_id):  # the client refuses these too
+        if not re.fullmatch(
+            r"[0-9A-Za-z-]+", unique_id
+        ):  # the client refuses these too
             raise ValueError(f"Refusing to delete movie {unique_id!r}")
         if not self.movies or self.movies[-1].unique_id != unique_id:
             raise TwinklyResponseError(1101, "Only the last movie, by its listed id")

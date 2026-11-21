@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from homeassistant.config_entries import (
     SOURCE_IGNORE,
     SOURCE_USER,
@@ -11,10 +12,12 @@ from homeassistant.config_entries import (
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import translation
-import pytest
 from pytest_homeassistant.common import MockConfigEntry, mock_component
 
-from custom_components.twinkly_canvas.api import TwinklyConnectionError, TwinklyResponseError
+from custom_components.twinkly_canvas.api import (
+    TwinklyConnectionError,
+    TwinklyResponseError,
+)
 from custom_components.twinkly_canvas.const import DOMAIN, MIN_FIRMWARE
 
 from .fake_device import GESTALT
@@ -37,10 +40,12 @@ async def _no_setup(hass: HomeAssistant) -> AsyncGenerator[AsyncMock]:
     """The flow tests neither set up nor unload the entries they make."""
     with (
         patch(
-            "custom_components.twinkly_canvas.async_setup_entry", AsyncMock(return_value=True)
+            "custom_components.twinkly_canvas.async_setup_entry",
+            AsyncMock(return_value=True),
         ) as setup,
         patch(
-            "custom_components.twinkly_canvas.async_unload_entry", AsyncMock(return_value=True)
+            "custom_components.twinkly_canvas.async_unload_entry",
+            AsyncMock(return_value=True),
         ),
         # serving the card needs the real http component, which these tests mock
         patch("custom_components.twinkly_canvas.async_register_card", AsyncMock()),
@@ -93,7 +98,10 @@ async def test_unsupported_firmware(hass: HomeAssistant) -> None:
     assert result["reason"] == "unsupported_firmware"
     assert result["description_placeholders"] == {"min_firmware": MIN_FIRMWARE}
     texts = await translation.async_get_translations(hass, "en", "config", [DOMAIN])
-    assert "{min_firmware}" in texts[f"component.{DOMAIN}.config.abort.unsupported_firmware"]
+    assert (
+        "{min_firmware}"
+        in texts[f"component.{DOMAIN}.config.abort.unsupported_firmware"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -134,7 +142,9 @@ async def test_core_twinkly_guard(hass: HomeAssistant) -> None:
     "core",
     [{"source": SOURCE_IGNORE}, {"disabled_by": ConfigEntryDisabler.USER}],
 )
-async def test_inactive_core_twinkly_does_not_block(hass: HomeAssistant, core: dict) -> None:
+async def test_inactive_core_twinkly_does_not_block(
+    hass: HomeAssistant, core: dict
+) -> None:
     MockConfigEntry(domain="twinkly", unique_id=MAC, **core).add_to_hass(hass)
     result = await _start(hass)
     assert result["type"] is FlowResultType.CREATE_ENTRY

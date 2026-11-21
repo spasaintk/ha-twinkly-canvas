@@ -8,13 +8,13 @@ and only from the end of the movie list.
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
-import logging
-import math
-import uuid
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -70,7 +70,8 @@ class DeviceInfoData:
         leds = gestalt["number_of_led"]
         bytes_per_led = gestalt["bytes_per_led"]
         strings = tuple(
-            (s["first_led_id"], s["length"]) for s in (led_config or {}).get("strings", [])
+            (s["first_led_id"], s["length"])
+            for s in (led_config or {}).get("strings", [])
         )
         return cls(
             mac=format_mac(gestalt["mac"]),
@@ -114,7 +115,9 @@ class TwinklyDevice:
         self.store = store
         self.info = info
         self._lock = asyncio.Lock()
-        self._rt_until = 0.0  # loop time until which our last real-time frame holds rt mode
+        self._rt_until = (
+            0.0  # loop time until which our last real-time frame holds rt mode
+        )
         self._rt_epoch = 0  # the client's token epoch when we sent that frame
         # The canvas our last upload showed (an effect: its base); None: unknown after a start
         self._uploaded: list[RGBW] | None = None
@@ -139,13 +142,17 @@ class TwinklyDevice:
         async with self._lock:
             mode = (await self.client.get_mode())["mode"]
             if mode != "rt":
-                self._rt_until = 0.0  # something else ended rt: our next frame enters it again
+                self._rt_until = (
+                    0.0  # something else ended rt: our next frame enters it again
+                )
             movies = await self._movie_state()
             current = await self._playing_movie(movies) if mode == "movie" else None
             return DeviceState(
                 mode=mode,
                 brightness=await self.client.get_brightness(),
-                effect_id=await self.client.get_current_effect() if mode == "effect" else None,
+                effect_id=await self.client.get_current_effect()
+                if mode == "effect"
+                else None,
                 effects_count=(await self.client.get_effects())["effects_number"],
                 current_movie=current,
                 movies=movies,
@@ -275,7 +282,9 @@ class TwinklyDevice:
         self._closed = True
         self._cancel_preview()
         self._debouncer.async_shutdown()
-        async with self._lock:  # so a store flush after this holds the command's changes
+        async with (
+            self._lock
+        ):  # so a store flush after this holds the command's changes
             pass
 
     @asynccontextmanager
@@ -311,7 +320,9 @@ class TwinklyDevice:
 
     async def _async_send_preview(self) -> None:
         async with self._lock:
-            if not self._cancel_commit:  # a command dropped this preview while it waited
+            if (
+                not self._cancel_commit
+            ):  # a command dropped this preview while it waited
                 return
             try:
                 await self._send_rt(self.store.canvas.to_frame(self.info.profile))
@@ -321,7 +332,9 @@ class TwinklyDevice:
     async def _async_commit(self, _now: datetime) -> None:
         try:
             async with self._command():
-                if self._cancel_preview():  # False: a command dropped it while it waited
+                if (
+                    self._cancel_preview()
+                ):  # False: a command dropped it while it waited
                     await self._show_canvas(self.store.canvas, Active("painted", None))
         except HomeAssistantError as err:
             _LOGGER.warning("Could not store the painting on the lights: %s", err)
@@ -333,7 +346,9 @@ class TwinklyDevice:
         self._uploaded = list(canvas.pixels)
         self.store.active = active
 
-    async def _play_effect(self, spec: EffectSpec, base: Canvas, active: Active) -> None:
+    async def _play_effect(
+        self, spec: EffectSpec, base: Canvas, active: Active
+    ) -> None:
         frames = await self.hass.async_add_executor_job(
             render, spec, base, self.fps, self.info.profile, MAX_FRAMES_PER_MOVIE
         )
@@ -377,7 +392,9 @@ class TwinklyDevice:
     async def _record_playing(self, mode: str) -> None:
         """Let store.active name what plays when it is not ours, so it can come back."""
         if mode == "effect":
-            self.store.active = Active("builtin", str(await self.client.get_current_effect()))
+            self.store.active = Active(
+                "builtin", str(await self.client.get_current_effect())
+            )
         elif mode == "movie":
             movie = await self._playing_movie(await self._movie_state())
             if movie and movie.unique_id not in self.store.our_movies:
@@ -395,7 +412,9 @@ class TwinklyDevice:
         try:
             return MovieState.from_api(data, self.info.max_movies)
         except (KeyError, TypeError, ValueError) as err:  # a malformed movie entry
-            raise TwinklyResponseError(None, "Twinkly sent an unexpected movie list") from err
+            raise TwinklyResponseError(
+                None, "Twinkly sent an unexpected movie list"
+            ) from err
 
     async def _upload(self, frames: list[bytes], fps: int) -> None:
         """Store frames as our newest movie and play it.
@@ -404,13 +423,16 @@ class TwinklyDevice:
         even after a new login), the whole sequence runs once more from a fresh movie list.
         """
         for attempt in (0, 1):
-            state = await self._movie_state()  # a login during this read changes nothing yet
+            state = (
+                await self._movie_state()
+            )  # a login during this read changes nothing yet
             epoch = self.client.token_epoch
             try:
                 await self._store_movie(state, frames, fps)
             except TwinklyError as err:
                 lost_token = (
-                    isinstance(err, TwinklyAuthError) or self.client.token_epoch != epoch
+                    isinstance(err, TwinklyAuthError)
+                    or self.client.token_epoch != epoch
                 )
                 if attempt or not lost_token:
                     raise
@@ -424,7 +446,9 @@ class TwinklyDevice:
     ) -> None:
         plan = plan_upload(state, set(self.store.our_movies), len(frames))
         if not plan.fits:
-            raise HomeAssistantError(translation_domain=DOMAIN, translation_key=plan.reason)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN, translation_key=plan.reason
+            )
         # Bridge: the first frame shows at once. Entering rt also stops a playing movie,
         # which the device refuses to delete (DELETE_NEEDS_MODE_CHANGE).
         self._rt_until = 0.0
@@ -433,7 +457,9 @@ class TwinklyDevice:
             await self.client.delete_movie(listed_uid)
             self.store.remove_our_movie(listed_uid)
         uid = str(uuid.uuid4())
-        self.store.add_our_movie(uid)  # before it exists: no movie of ours goes untracked
+        self.store.add_our_movie(
+            uid
+        )  # before it exists: no movie of ours goes untracked
         reply = await self.client.new_movie(
             self.store.next_movie_name(),
             uid,
@@ -442,7 +468,9 @@ class TwinklyDevice:
             self.info.led_count,
             f"{self.info.profile.lower()}_raw",
         )
-        await self.client.upload_movie(b"".join(frames))  # must directly follow movies/new
+        await self.client.upload_movie(
+            b"".join(frames)
+        )  # must directly follow movies/new
         if (movie_id := reply.get("id")) is None:  # find our movie by its uid instead
             listed = await self._movie_state()
             movie_id = next((m.id for m in listed.movies if m.unique_id == uid), None)

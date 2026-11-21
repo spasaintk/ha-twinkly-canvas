@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
+from dataclasses import dataclass
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -36,7 +36,10 @@ class TwinklyCanvasCoordinator(DataUpdateCoordinator[DeviceState]):
     config_entry: TwinklyCanvasConfigEntry
 
     def __init__(
-        self, hass: HomeAssistant, entry: TwinklyCanvasConfigEntry, device: TwinklyDevice
+        self,
+        hass: HomeAssistant,
+        entry: TwinklyCanvasConfigEntry,
+        device: TwinklyDevice,
     ) -> None:
         super().__init__(
             hass,

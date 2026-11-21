@@ -96,7 +96,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
     def __init__(self, data: TwinklyCanvasData) -> None:
         super().__init__(data)
         self._attr_unique_id = f"{data.info.mac}_light"
-        self._color_mode = ColorMode.RGB if data.info.profile == "RGB" else ColorMode.RGBW
+        self._color_mode = (
+            ColorMode.RGB if data.info.profile == "RGB" else ColorMode.RGBW
+        )
         self._attr_supported_color_modes = {self._color_mode}
 
     @property
@@ -156,7 +158,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
                 translation_key="unknown_effect",
                 translation_placeholders={"effect": kwargs[ATTR_EFFECT]},
             )
-        if ATTR_BRIGHTNESS in kwargs:  # HA's light service turns brightness 0 into turn_off
+        if (
+            ATTR_BRIGHTNESS in kwargs
+        ):  # HA's light service turns brightness 0 into turn_off
             percent = max(1, round(kwargs[ATTR_BRIGHTNESS] * 100 / 255))
             await self.device.async_set_brightness(percent)
         if ATTR_RGBW_COLOR in kwargs or ATTR_RGB_COLOR in kwargs:
@@ -189,7 +193,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
                 int(effect.removeprefix(PREFIX_BUILTIN)) - 1
             )
         else:
-            await self.device.async_select_app_movie(_app_movies(store, state)[effect].id)
+            await self.device.async_select_app_movie(
+                _app_movies(store, state)[effect].id
+            )
 
     # Actions (services.py); LED numbers in selections count from 1.
 
@@ -213,7 +219,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         with _invalid("invalid_color"):
             r, g, b, w = parse_color(color_name if color is None else color)
         indices = self._selection(leds)
-        canvas = Canvas(self.store.led_count) if clear_others else self.store.canvas.copy()
+        canvas = (
+            Canvas(self.store.led_count) if clear_others else self.store.canvas.copy()
+        )
         canvas.set(indices, (r, g, b, min(255, w + white)))
         await self.device.async_show_canvas(canvas, Active("painted", None))
         await self.coordinator.async_request_refresh()
@@ -226,7 +234,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         await self.device.async_play_effect(
             spec, self.store.canvas, Active("custom_effect", None)
         )
-        self.store.set_custom_effect(spec)  # once it plays: a failed upload keeps the old one
+        self.store.set_custom_effect(
+            spec
+        )  # once it plays: a failed upload keeps the old one
         await self.coordinator.async_request_refresh()
 
     def effect_spec(
@@ -235,7 +245,9 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         """The checked effect for play_effect's arguments; the card's preview uses it too."""
         with _invalid("invalid_color"):
             parsed = tuple(parse_color(c) for c in colors)
-        return EffectSpec(kind, tuple(self._selection(leds)), parsed, speed / 100, keep_others)
+        return EffectSpec(
+            kind, tuple(self._selection(leds)), parsed, speed / 100, keep_others
+        )
 
     async def async_apply_look(self, look: str) -> None:
         await self.device.async_apply_look(look)

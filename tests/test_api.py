@@ -4,9 +4,9 @@ import asyncio
 import base64
 
 import aiohttp
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import pytest
 from pytest_homeassistant.test_util.aiohttp import (
     AiohttpClientMocker,
     AiohttpClientMockResponse,
@@ -24,7 +24,9 @@ BASE = f"http://{HOST}/xled/v1"
 
 
 @pytest.fixture
-async def client(hass: HomeAssistant, aioclient_mock: AiohttpClientMocker) -> TwinklyClient:
+async def client(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> TwinklyClient:
     """Client on the mocked session; every login hands out token "tok"."""
     aioclient_mock.post(
         f"{BASE}/login",
@@ -40,7 +42,9 @@ def _calls(mock: AiohttpClientMocker, path: str) -> list[tuple]:
 
 
 async def test_gestalt_no_auth(client, aioclient_mock):
-    aioclient_mock.get(f"{BASE}/gestalt", json={"device_name": "Test Tree", "code": 1000})
+    aioclient_mock.get(
+        f"{BASE}/gestalt", json={"device_name": "Test Tree", "code": 1000}
+    )
     assert (await client.gestalt())["device_name"] == "Test Tree"
     assert aioclient_mock.call_count == 1  # no login
     assert "X-Auth-Token" not in (aioclient_mock.mock_calls[0][3] or {})
@@ -81,11 +85,17 @@ async def test_concurrent_calls_login_once(client, aioclient_mock):
     """Every login kills the previous token, so a call that waited must reuse the new one."""
 
     async def slow_login(method, url, data):
-        await asyncio.sleep(0)  # let the second call start while this login is in flight
+        await asyncio.sleep(
+            0
+        )  # let the second call start while this login is in flight
         return AiohttpClientMockResponse(
             method,
             url,
-            json={"authentication_token": "tok", "challenge-response": "cr", "code": 1000},
+            json={
+                "authentication_token": "tok",
+                "challenge-response": "cr",
+                "code": 1000,
+            },
         )
 
     aioclient_mock.clear_requests()

@@ -24,7 +24,9 @@ ODD_38_80 = list(range(38, 79, 2))  # 0-based indices of the odd LED numbers 39-
 ENTITY = {"entity_id": "light.test_tree"}
 RED = [255, 0, 0, 0]
 GREEN = [0, 200, 40, 0]
-SNOWFALL = "0a1b2c3d-0000-4000-8000-000000000004"  # unique_id of an app movie in the fixture
+SNOWFALL = (
+    "0a1b2c3d-0000-4000-8000-000000000004"  # unique_id of an app movie in the fixture
+)
 
 
 @pytest.fixture
@@ -53,13 +55,15 @@ async def page():
 async def _calls(page, command: str) -> list[dict]:
     """The messages of one websocket command the card sent, oldest first."""
     return await page.evaluate(
-        "type => window.__calls.filter(c => c.type === type)", f"twinkly_canvas/{command}"
+        "type => window.__calls.filter(c => c.type === type)",
+        f"twinkly_canvas/{command}",
     )
 
 
 async def _last(page, command: str) -> dict:
     await page.wait_for_function(
-        "type => window.__calls.some(c => c.type === type)", arg=f"twinkly_canvas/{command}"
+        "type => window.__calls.some(c => c.type === type)",
+        arg=f"twinkly_canvas/{command}",
     )
     return (await _calls(page, command))[-1]
 
@@ -156,7 +160,9 @@ async def test_touch_drag(page) -> None:
 
     async def touch(kind: str, x: float | None = None) -> None:
         points = [] if x is None else [{"x": x, "y": y}]
-        await cdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": points})
+        await cdp.send(
+            "Input.dispatchTouchEvent", {"type": kind, "touchPoints": points}
+        )
 
     await touch("touchStart", x1)
     for step in range(1, 13):
@@ -166,9 +172,13 @@ async def test_touch_drag(page) -> None:
 
 
 async def test_group_select(page) -> None:
-    await page.get_by_label("Select a saved group").select_option("Top")  # "301-400 odd"
+    await page.get_by_label("Select a saved group").select_option(
+        "Top"
+    )  # "301-400 odd"
     await expect(page.get_by_text("Colour for 50 LEDs")).to_be_visible()
-    await expect(page.locator(".rl").first).to_have_text("301")  # the page of its first LED
+    await expect(page.locator(".rl").first).to_have_text(
+        "301"
+    )  # the page of its first LED
     await expect(_dot(page, 301)).to_have_attribute("aria-pressed", "true")
     await expect(_dot(page, 302)).to_have_attribute("aria-pressed", "false")
     await page.get_by_role("button", name="Even", exact=True).click()  # every even LED
@@ -189,7 +199,9 @@ async def test_paint_call(page) -> None:
 
     await page.get_by_label("Custom colour").filter(visible=True).fill("#123456")
     assert (await _last(page, "paint"))["color"] == [0x12, 0x34, 0x56, 0]
-    await expect(_dot(page, 39)).to_have_css("background-color", "rgb(18, 52, 86)")  # at once
+    await expect(_dot(page, 39)).to_have_css(
+        "background-color", "rgb(18, 52, 86)"
+    )  # at once
 
 
 async def test_live_off_shows_apply(page) -> None:
@@ -238,21 +250,34 @@ async def test_error_shown(page) -> None:
     await _dot(page, 1).click()
     await page.get_by_role("button", name="Off", exact=True).click()
     await expect(page.get_by_role("alert")).to_have_text("Twinkly did not answer")
-    await expect(_dot(page, 1)).to_have_css("background-color", "rgb(255, 0, 0)")  # reloaded
+    await expect(_dot(page, 1)).to_have_css(
+        "background-color", "rgb(255, 0, 0)"
+    )  # reloaded
 
 
 async def test_card_api(page) -> None:
     assert await page.evaluate(
         "customElements.get('twinkly-canvas-card').getStubConfig(window.hass)"
     ) == {"entity": "light.test_tree"}
-    assert await page.evaluate("document.querySelector('twinkly-canvas-card').getCardSize()") == 8
-    assert await page.evaluate("window.customCards.some(c => c.type === 'twinkly-canvas-card')")
+    assert (
+        await page.evaluate(
+            "document.querySelector('twinkly-canvas-card').getCardSize()"
+        )
+        == 8
+    )
+    assert await page.evaluate(
+        "window.customCards.some(c => c.type === 'twinkly-canvas-card')"
+    )
 
 
 async def test_tabs(page) -> None:
-    await expect(page.get_by_role("tab", name="Colours")).to_have_attribute("aria-selected", "true")
+    await expect(page.get_by_role("tab", name="Colours")).to_have_attribute(
+        "aria-selected", "true"
+    )
     await _tab(page, "Moving")
-    await expect(page.get_by_role("tab", name="Moving")).to_have_attribute("aria-selected", "true")
+    await expect(page.get_by_role("tab", name="Moving")).to_have_attribute(
+        "aria-selected", "true"
+    )
     await expect(page.get_by_role("tab", name="Colours")).to_have_attribute(
         "aria-selected", "false"
     )
@@ -279,7 +304,9 @@ async def test_rebuild_keeps_switch_and_tab(page) -> None:
     await expect(page.get_by_role("button", name="Apply")).to_be_visible()
     await _tab(page, "Looks")
     await reconfigure()
-    await expect(page.get_by_role("tab", name="Looks")).to_have_attribute("aria-selected", "true")
+    await expect(page.get_by_role("tab", name="Looks")).to_have_attribute(
+        "aria-selected", "true"
+    )
     await expect(page.get_by_role("button", name="Save what's on now")).to_be_visible()
 
 
@@ -311,7 +338,9 @@ async def test_moving_defaults_slots_and_runs_on(page) -> None:
     await expect(runs.locator("option:checked")).to_have_text("Selected LEDs (21)")
     for name in ("Gold", "Green", "Red"):
         await page.get_by_role("button", name=name, exact=True).click()
-    await expect(page.get_by_role("button", name="Silver", exact=True)).to_be_disabled()  # 3 max
+    await expect(
+        page.get_by_role("button", name="Silver", exact=True)
+    ).to_be_disabled()  # 3 max
     await page.get_by_role("button", name="Remove colour 1, Gold").click()
     await page.get_by_role("switch", name="Other LEDs keep their colours").uncheck()
     await page.get_by_role("button", name="Play on tree").click()
@@ -336,11 +365,21 @@ async def test_preview_animates(page) -> None:
     assert await _last(page, "effect/render") == {
         "type": "twinkly_canvas/effect/render",
         **ENTITY,
-        "spec": {"kind": "twinkle", "colors": [], "leds": "all", "speed": 50, "keep_others": True},
+        "spec": {
+            "kind": "twinkle",
+            "colors": [],
+            "leds": "all",
+            "speed": 50,
+            "keep_others": True,
+        },
     }
     await expect(dot).to_have_css("background-color", "rgb(0, 200, 40)", timeout=1000)
-    await expect(dot).to_have_css("background-color", "rgb(0, 60, 255)", timeout=1000)  # next
-    await expect(page.locator(".orow i").first).to_have_css("background-color", "rgb(0, 200, 40)")
+    await expect(dot).to_have_css(
+        "background-color", "rgb(0, 60, 255)", timeout=1000
+    )  # next
+    await expect(page.locator(".orow i").first).to_have_css(
+        "background-color", "rgb(0, 200, 40)"
+    )
 
 
 @pytest.mark.parametrize(
@@ -386,7 +425,9 @@ async def test_preview_timer_stops_when_removed(page) -> None:
 
 async def test_builtin_call(page) -> None:
     await _tab(page, "Moving")
-    await expect(page.get_by_role("button", name="Built-in 5", exact=True)).to_be_visible()
+    await expect(
+        page.get_by_role("button", name="Built-in 5", exact=True)
+    ).to_be_visible()
     await page.get_by_role("button", name="Built-in 3", exact=True).click()
     assert await _last(page, "builtin") == {
         "type": "twinkly_canvas/builtin",
@@ -408,7 +449,12 @@ async def test_app_movie_call(page) -> None:
 @pytest.mark.parametrize(
     ("active", "mode", "now", "marked"),
     [
-        ({"type": "builtin", "ref": "2"}, "effect", "Playing built-in effect 3", "Built-in 3"),
+        (
+            {"type": "builtin", "ref": "2"},
+            "effect",
+            "Playing built-in effect 3",
+            "Built-in 3",
+        ),
         (
             {"type": "app_movie", "ref": SNOWFALL},
             "movie",
@@ -421,9 +467,19 @@ async def test_app_movie_call(page) -> None:
             "Playing content from the Twinkly app",
             None,
         ),
-        ({"type": "builtin", "ref": "2"}, "off", "Off", None),  # what comes back when on
+        (
+            {"type": "builtin", "ref": "2"},
+            "off",
+            "Off",
+            None,
+        ),  # what comes back when on
         ({"type": "off", "ref": None}, "off", "Off", None),
-        ({"type": "custom_effect", "ref": None}, "movie", "Playing your moving effect", None),
+        (
+            {"type": "custom_effect", "ref": None},
+            "movie",
+            "Playing your moving effect",
+            None,
+        ),
         (
             {"type": "look", "ref": "Red and silver"},
             "movie",
@@ -434,7 +490,9 @@ async def test_app_movie_call(page) -> None:
         ({"type": "from_a_newer_version", "ref": "x"}, "movie", "", None),
     ],
 )
-async def test_active_shown(page, active: dict, mode: str, now: str, marked: str | None) -> None:
+async def test_active_shown(
+    page, active: dict, mode: str, now: str, marked: str | None
+) -> None:
     await _tab(page, "Moving")
     await _set_state(page, {"active": active, "mode": mode})
     await expect(page.locator(".now")).to_have_text(now)
@@ -447,7 +505,9 @@ async def test_active_shown(page, active: dict, mode: str, now: str, marked: str
 
 async def test_memory_meter_text(page) -> None:
     await _tab(page, "Moving")
-    await expect(page.get_by_text("Memory on the lights: 5% used", exact=True)).to_be_visible()
+    await expect(
+        page.get_by_text("Memory on the lights: 5% used", exact=True)
+    ).to_be_visible()
     await _set_state(page, {"memory": {"used_pct": 18.2, "stranded": 2}})
     text = page.get_by_text("Memory on the lights: 18% used, 2 stranded", exact=True)
     await expect(text).to_be_visible()
@@ -475,7 +535,9 @@ async def test_looks_list_and_apply(page) -> None:
         "name": "Red and silver",
     }
 
-    await _set_state(page, {"active": {"type": "look", "ref": "red AND silver"}})  # Ruling 19
+    await _set_state(
+        page, {"active": {"type": "look", "ref": "red AND silver"}}
+    )  # Ruling 19
     applied = page.get_by_role("button", name="Red and silver", exact=True)
     await expect(applied).to_have_attribute("aria-current", "true")
     await expect(looks.nth(1)).to_contain_text("on now")
@@ -499,7 +561,9 @@ async def test_look_rename_update_delete_calls(page) -> None:
         "name": "Red and silver",
         "new_name": "Warm glow",
     }
-    await expect(page.get_by_role("button", name="Warm glow", exact=True)).to_be_visible()
+    await expect(
+        page.get_by_role("button", name="Warm glow", exact=True)
+    ).to_be_visible()
 
     await page.get_by_role("button", name="Options for Warm glow").click()
     await page.get_by_role("button", name="Update from what's on now").click()
@@ -560,10 +624,16 @@ async def test_group_delete_call(page) -> None:
         **ENTITY,
         "name": "Corners",
     }
-    await expect(page.get_by_role("button", name="Delete group Corners")).to_have_count(0)
+    await expect(page.get_by_role("button", name="Delete group Corners")).to_have_count(
+        0
+    )
     await expect(page.get_by_role("button", name="Delete group Top")).to_be_visible()
-    await expect(page.get_by_label("Select a saved group")).not_to_contain_text("Corners")
-    await expect(runs.locator("option:checked")).to_have_text("All LEDs")  # its group is gone
+    await expect(page.get_by_label("Select a saved group")).not_to_contain_text(
+        "Corners"
+    )
+    await expect(runs.locator("option:checked")).to_have_text(
+        "All LEDs"
+    )  # its group is gone
 
 
 async def test_editor_renders(page) -> None:
@@ -594,7 +664,9 @@ async def test_editor_renders(page) -> None:
         "schema": [
             {
                 "name": "entity",
-                "selector": {"entity": {"integration": "twinkly_canvas", "domain": "light"}},
+                "selector": {
+                    "entity": {"integration": "twinkly_canvas", "domain": "light"}
+                },
             }
         ],
         "data": {"type": "custom:twinkly-canvas-card", "entity": "light.test_tree"},
@@ -618,5 +690,9 @@ async def test_screenshots(page, width: int, query: str) -> None:
             await page.get_by_role("button", name="Silver", exact=True).click()
         if tab == "Looks":
             await page.get_by_role("button", name="Options for Red and silver").click()
-        assert await page.evaluate("document.documentElement.scrollWidth") <= width  # no sideways
-        await page.screenshot(path=RESULTS / f"{tab.lower()}-{width}.png", full_page=True)
+        assert (
+            await page.evaluate("document.documentElement.scrollWidth") <= width
+        )  # no sideways
+        await page.screenshot(
+            path=RESULTS / f"{tab.lower()}-{width}.png", full_page=True
+        )

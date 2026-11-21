@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import voluptuous as vol
 from awesomeversion import AwesomeVersion
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import voluptuous as vol
 
 from . import core_twinkly_configured
 from .api import TwinklyClient, TwinklyError
@@ -42,7 +42,9 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
             try:
                 gestalt = await client.gestalt()
                 firmware = await client.firmware_version()
-            except TwinklyError:  # a wrong host may answer 404, junk or 401, not only time out
+            except (
+                TwinklyError
+            ):  # a wrong host may answer 404, junk or 401, not only time out
                 errors["base"] = "cannot_connect"
             else:
                 # First: an older firmware may also be what leaves out the LED information.
@@ -53,7 +55,7 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 try:
                     info = DeviceInfoData.from_api(gestalt, firmware, None)
-                except (KeyError, TypeError):  # setup would fail on the same gestalt
+                except KeyError, TypeError:  # setup would fail on the same gestalt
                     return self.async_abort(reason="unsupported_device")
                 if abort := self._check(gestalt, info):
                     return self.async_abort(reason=abort)

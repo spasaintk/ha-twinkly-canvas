@@ -1,18 +1,18 @@
 """Tests for the device layer, run against the simulated device."""
 
 import asyncio
-from collections.abc import AsyncGenerator, Coroutine
-from datetime import timedelta
 import inspect
 import logging
 import math
+from collections.abc import AsyncGenerator, Coroutine
+from datetime import timedelta
 from typing import Any
 
+import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.util import dt as dt_util
-import pytest
 from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.twinkly_canvas.api import (
@@ -64,7 +64,9 @@ def _own(fake: FakeTwinkly, device: TwinklyDevice) -> list[FakeMovie]:
     return [m for m in fake.movies if m.unique_id.lower() in device.store.our_movies]
 
 
-async def _while_time_passes(hass: HomeAssistant, coro: Coroutine[Any, Any, None]) -> None:
+async def _while_time_passes(
+    hass: HomeAssistant, coro: Coroutine[Any, Any, None]
+) -> None:
     """Await coro while the clock jumps on 0.5 s at a time (it sleeps between frames)."""
     task = hass.async_create_task(coro)
     while not task.done():
@@ -99,9 +101,14 @@ def test_fake_mirrors_client() -> None:
 
 def test_device_info_from_api() -> None:
     strings = {
-        "strings": [{"first_led_id": 0, "length": 200}, {"first_led_id": 200, "length": 200}]
+        "strings": [
+            {"first_led_id": 0, "length": 200},
+            {"first_led_id": 200, "length": 200},
+        ]
     }
-    info = DeviceInfoData.from_api({**GESTALT, "mac": "AA-BB-CC-00-11-22"}, "2.8.18", strings)
+    info = DeviceInfoData.from_api(
+        {**GESTALT, "mac": "AA-BB-CC-00-11-22"}, "2.8.18", strings
+    )
     assert info == DeviceInfoData(
         mac="aa:bb:cc:00:11:22",
         name="Test Tree",
@@ -221,7 +228,9 @@ async def test_memory_full_raises(device: TwinklyDevice, fake: FakeTwinkly) -> N
     assert loop_length(spec, device.fps) == 120
     movies, rt_frames, mode = list(fake.movies), len(fake.rt_frames), fake.mode
     with pytest.raises(HomeAssistantError) as err:
-        await device.async_play_effect(spec, device.store.canvas, Active("custom_effect", None))
+        await device.async_play_effect(
+            spec, device.store.canvas, Active("custom_effect", None)
+        )
     assert err.value.translation_key == "memory_full"
     assert fake.movies == movies  # nothing deleted, not even our own movie
     assert (len(fake.rt_frames), fake.mode) == (rt_frames, mode)  # nothing touched
@@ -240,7 +249,9 @@ async def test_token_stolen_midway_restarts_once(
 ) -> None:
     epoch = fake.token_epoch
     fake.steal_token_after(call_name)
-    await device.async_play_effect(CHASE, device.store.canvas, Active("custom_effect", None))
+    await device.async_play_effect(
+        CHASE, device.store.canvas, Active("custom_effect", None)
+    )
     (movie,) = _own(fake, device)
     assert fake.playing is movie
     assert movie is fake.movies[-1]
@@ -254,17 +265,25 @@ async def test_token_stolen_midway_restarts_once(
 async def test_token_lost_twice_raises(
     device: TwinklyDevice, fake: FakeTwinkly, caplog: pytest.LogCaptureFixture
 ) -> None:
-    fake.steal_token_after("new_movie", "new_movie")  # the frames are refused both times
+    fake.steal_token_after(
+        "new_movie", "new_movie"
+    )  # the frames are refused both times
     with (
         caplog.at_level(logging.DEBUG, "custom_components.twinkly_canvas.device"),
         pytest.raises(HomeAssistantError) as err,
     ):
-        await device.async_play_effect(CHASE, device.store.canvas, Active("custom_effect", None))
+        await device.async_play_effect(
+            CHASE, device.store.canvas, Active("custom_effect", None)
+        )
     assert err.value.translation_key == "device_error"
     assert fake.calls.count("new_movie") == 2
-    first = [r for r in caplog.records if "movies/full without movies/new" in r.getMessage()]
+    first = [
+        r for r in caplog.records if "movies/full without movies/new" in r.getMessage()
+    ]
     assert [r.levelno for r in first] == [logging.DEBUG]  # the first attempt's error
-    (half,) = _own(fake, device)  # the half-created movie stays ours: the next upload deletes it
+    (half,) = _own(
+        fake, device
+    )  # the half-created movie stays ours: the next upload deletes it
     assert half is fake.movies[-1]
 
 
@@ -362,7 +381,9 @@ async def test_dropped_commit_restores_newest_painting(
     else:  # HA stops; the next start makes a new device on the same store
         await device.async_shutdown()
         device = TwinklyDevice(hass, fake, device.store, device.info)
-        await device.async_turn_off()  # the preview still shows: turning on alone keeps it
+        await (
+            device.async_turn_off()
+        )  # the preview still shows: turning on alone keeps it
     await advance(hass, 10)
     assert fake.calls.count("new_movie") == 1  # the commit was dropped
     await device.async_turn_on()
@@ -395,7 +416,9 @@ async def test_command_drops_commit_waiting_behind_it(
 
     fake.get_movies = slow_get_movies  # type: ignore[method-assign]
     select = hass.async_create_task(device.async_select_app_movie(3))  # holds the lock
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=3))  # commit waits
+    async_fire_time_changed(
+        hass, dt_util.utcnow() + timedelta(seconds=3)
+    )  # commit waits
     lookup.set()
     await select
     await advance(hass, 10)
@@ -454,7 +477,9 @@ async def test_preview_enters_rt_again_after_outside_change(
 async def test_preview_enters_rt_again_after_another_login(
     hass: HomeAssistant, device: TwinklyDevice, fake: FakeTwinkly
 ) -> None:
-    fake.steal_token_after("send_rt_frame")  # another client logs in after our frame ...
+    fake.steal_token_after(
+        "send_rt_frame"
+    )  # another client logs in after our frame ...
     await _paint_live(device, _canvas())
     await advance(hass, 0.6)
     fake.mode = "effect"  # ... and ends rt
@@ -478,7 +503,9 @@ async def test_find_blinks_then_restores(
     white, dark, dim_red = bytes([0, 255, 255, 255]), bytes(4), bytes([0, 38, 0, 0])
     assert fake.rt_frames[0][:12] == white * 2 + dim_red
     assert fake.rt_frames[1][:12] == dark * 2 + dim_red
-    assert fake.calls[calls:].count("set_mode") == 2  # rt once, not per frame; then effect
+    assert (
+        fake.calls[calls:].count("set_mode") == 2
+    )  # rt once, not per frame; then effect
     assert (fake.mode, fake.effect_id) == ("effect", 2)
 
 
@@ -530,12 +557,16 @@ async def test_turn_on_reuploads_when_movie_gone(
     assert fake.playing.unique_id.lower() == device.store.current_movie_uid
 
 
-async def test_restore_when_movie_gone(device: TwinklyDevice, fake: FakeTwinkly) -> None:
+async def test_restore_when_movie_gone(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
     """The custom effect renders again; a missing look or effect falls back to the canvas."""
     canvas = _canvas()
     device.store.set_canvas(canvas)
     device.store.set_custom_effect(CHASE)
-    await device.async_play_effect(CHASE, device.store.canvas, Active("custom_effect", None))
+    await device.async_play_effect(
+        CHASE, device.store.canvas, Active("custom_effect", None)
+    )
     await _lose_our_movie(device, fake)
     await device.async_turn_on()
     assert fake.playing.data == b"".join(render(CHASE, canvas, 11))
@@ -598,7 +629,9 @@ async def test_select_builtin_and_app_movie(
     assert fake.playing is fake.movies[2]
 
 
-async def test_unknown_look_and_app_movie(device: TwinklyDevice, fake: FakeTwinkly) -> None:
+async def test_unknown_look_and_app_movie(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
     with pytest.raises(ServiceValidationError) as err:
         await device.async_apply_look("Missing")
     assert err.value.translation_key == "unknown_look"
@@ -608,16 +641,25 @@ async def test_unknown_look_and_app_movie(device: TwinklyDevice, fake: FakeTwink
     assert (fake.mode, len(fake.movies)) == ("effect", 7)
 
 
-async def test_new_movie_reply_without_id(device: TwinklyDevice, fake: FakeTwinkly) -> None:
+async def test_new_movie_reply_without_id(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
     fake.omit_new_movie_id = True
     await device.async_show_canvas(_canvas(), Active("painted", None))
     (movie,) = _own(fake, device)
     assert fake.playing is movie
 
 
-async def test_unexpected_movie_list_raises(device: TwinklyDevice, fake: FakeTwinkly) -> None:
+async def test_unexpected_movie_list_raises(
+    device: TwinklyDevice, fake: FakeTwinkly
+) -> None:
     async def get_movies() -> dict:
-        return {"movies": [{"id": 0}], "available_frames": 1, "max_capacity": 2, "code": 1000}
+        return {
+            "movies": [{"id": 0}],
+            "available_frames": 1,
+            "max_capacity": 2,
+            "code": 1000,
+        }
 
     fake.get_movies = get_movies  # type: ignore[method-assign]
     with pytest.raises(TwinklyResponseError, match="unexpected movie list"):
@@ -651,7 +693,9 @@ async def test_shutdown_waits_for_the_command_in_flight(
 ) -> None:
     """Shutdown waits for a running Find; a preview frame waiting behind it never goes out."""
     fake.mode = "off"
-    find = hass.async_create_task(device.async_find([0]))  # holds the lock while it blinks
+    find = hass.async_create_task(
+        device.async_find([0])
+    )  # holds the lock while it blinks
     await _paint_live(device, _canvas())
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=0.6))
     await asyncio.sleep(0)  # the preview frame now waits for Find

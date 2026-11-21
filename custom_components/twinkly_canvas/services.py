@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import voluptuous as vol
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv, service
-import voluptuous as vol
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import service
 
 from .const import DOMAIN
 from .effects import EFFECT_KINDS

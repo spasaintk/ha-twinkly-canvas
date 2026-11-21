@@ -4,11 +4,11 @@ import asyncio
 import base64
 from datetime import timedelta
 
+import pytest
 from homeassistant.components.light import ColorMode, LightEntity
 from homeassistant.components.light.const import DATA_COMPONENT as LIGHT_ENTITIES
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-import pytest
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 from pytest_homeassistant.typing import MockHAClientWebSocket, WebSocketGenerator
 
@@ -123,14 +123,21 @@ async def test_state(
     data.store.save_look(moving)
     data.store.save_look(Look("angel", Canvas(400), None))
     data.store.set_custom_effect(EffectSpec("twinkle", (5,)))
-    await data.device.async_show_canvas(Canvas(400), Active("painted", None))  # ours: id 7
+    await data.device.async_show_canvas(
+        Canvas(400), Active("painted", None)
+    )  # ours: id 7
     later = fake.add_app_movie("Later", 10)  # strands our movie
     await data.coordinator.async_refresh()
 
     state = await _ok(ws, "state")
     assert state["groups"] == {"Top": "1-10"}
     assert state["looks"] == [  # sorted like the effect list, ignoring case
-        {"name": "angel", "kind": "static", "canvas": Canvas(400).to_b64(), "effect": None},
+        {
+            "name": "angel",
+            "kind": "static",
+            "canvas": Canvas(400).to_b64(),
+            "effect": None,
+        },
         {
             "name": "Moving",
             "kind": "moving",
@@ -201,7 +208,9 @@ async def test_paint_not_live_then_commit(
 
 async def _light(hass: HomeAssistant, service: str) -> None:
     """The light's own turn_on or turn_off, as a dashboard toggle calls it."""
-    await hass.services.async_call("light", service, {"entity_id": ENTITY}, blocking=True)
+    await hass.services.async_call(
+        "light", service, {"entity_id": ENTITY}, blocking=True
+    )
 
 
 async def test_live_then_not_live_then_commit(
@@ -253,7 +262,9 @@ async def test_turn_off_during_live_keeps_painting(
     assert store.active == Active("painted", None)
 
 
-@pytest.mark.parametrize(("command", "data"), [("commit", {}), ("effect/play", {"spec": CHASE})])
+@pytest.mark.parametrize(
+    ("command", "data"), [("commit", {}), ("effect/play", {"spec": CHASE})]
+)
 async def test_failed_upload_forgets_movie(
     hass: HomeAssistant,
     entry: MockConfigEntry,
@@ -292,7 +303,10 @@ async def test_app_movie_refuses_ours(
     await _ok(ws, "paint", leds=[1], color=list(WARM))  # live: a commit is pending
     calls = len(fake.calls)
     error = await _error(ws, "app_movie", movie_id=7)
-    assert error == {"code": "invalid_format", "message": 'These lights have no effect "7"'}
+    assert error == {
+        "code": "invalid_format",
+        "message": 'These lights have no effect "7"',
+    }
     assert fake.calls[calls:] == ["get_movies"]  # looked up, nothing changed
     assert (fake.playing, store.active) == (ours, Active("painted", None))
     await advance(hass, 3)  # the pending painting was kept
@@ -333,7 +347,13 @@ async def test_effect_render(
     store.set_canvas(Canvas(400, [(10, 20, 30, 40)] * 400))
     calls = len(fake.calls)
 
-    spec = {"kind": "twinkle", "leds": "all", "colors": [], "speed": 50, "keep_others": True}
+    spec = {
+        "kind": "twinkle",
+        "leds": "all",
+        "colors": [],
+        "speed": 50,
+        "keep_others": True,
+    }
     result = await _ok(ws, "effect/render", spec=spec)
     effect = EffectSpec("twinkle", tuple(range(400)))
     assert loop_length(effect, 11) == 132  # longer than the preview
@@ -342,14 +362,18 @@ async def test_effect_render(
     frames = [base64.b64decode(f) for f in result["frames"]]
     assert all(len(f) == 1600 for f in frames)
     # A seamless 120-frame loop, not 120 frames cut from the 132-frame loop
-    assert frames == [_card_bytes(f) for f in render(effect, store.canvas, 11, "RGBW", 120)]
+    assert frames == [
+        _card_bytes(f) for f in render(effect, store.canvas, 11, "RGBW", 120)
+    ]
 
     spec = {**CHASE, "colors": [list(RED)], "keep_others": True}
     result = await _ok(ws, "effect/render", spec=spec)
     effect = EffectSpec("chase", tuple(range(20)), (RED,), speed=1.0)
     assert len(result["frames"]) == min(120, loop_length(effect, 11))
     for frame in map(base64.b64decode, result["frames"]):
-        assert frame[-4:] == bytes([10, 20, 30, 40])  # LED 400 keeps its colour: R,G,B,W
+        assert frame[-4:] == bytes(
+            [10, 20, 30, 40]
+        )  # LED 400 keeps its colour: R,G,B,W
     assert fake.calls[calls:] == []  # a preview stays on the card
 
 
@@ -361,7 +385,9 @@ async def test_effect_play(
 ) -> None:
     store = entry.runtime_data.store
     assert await _ok(ws, "effect/play", spec=CHASE) is None
-    effect = EffectSpec("chase", tuple(range(20)), (RED, SILVER), 1.0, keep_others=False)
+    effect = EffectSpec(
+        "chase", tuple(range(20)), (RED, SILVER), 1.0, keep_others=False
+    )
     assert store.custom_effect == effect
     assert store.active == Active("custom_effect", None)
     assert fake.playing.data == b"".join(render(effect, store.canvas, 11, "RGBW"))
@@ -375,7 +401,9 @@ async def test_effect_play(
         "keep_others": True,
     }
     await _ok(ws, "effect/play", spec=breathe)
-    assert store.custom_effect == EffectSpec("breathe", tuple(range(0, 20, 2)), speed=0.0)
+    assert store.custom_effect == EffectSpec(
+        "breathe", tuple(range(0, 20, 2)), speed=0.0
+    )
 
 
 async def test_builtin_and_app_movie(
@@ -435,7 +463,10 @@ async def test_look_lifecycle(
     assert store.active == Active("look", "Golden")
 
     error = await _error(ws, "look/rename", name="Golden", new_name="Dark")
-    assert error == {"code": "invalid_format", "message": "A look named 'Dark' already exists"}
+    assert error == {
+        "code": "invalid_format",
+        "message": "A look named 'Dark' already exists",
+    }
     assert await _ok(ws, "look/delete", name="Golden") is None
     assert list(store.looks) == ["Dark"]
     assert store.active == Active("painted", None)  # the deleted look was active
@@ -554,7 +585,10 @@ async def test_paint_names_leds_from_1(
     ws: MockHAClientWebSocket,
 ) -> None:
     """The card's 0-based indices are named like LED numbers in a selection."""
-    for leds, message in (([0, 400], "LED 401 is outside 1-400"), ([-1], "LED 0 is outside 1-400")):
+    for leds, message in (
+        ([0, 400], "LED 401 is outside 1-400"),
+        ([-1], "LED 0 is outside 1-400"),
+    ):
         error = await _error(ws, "paint", leds=leds, color=list(RED))
         assert error == {"code": "invalid_format", "message": message}
     assert entry.runtime_data.store.canvas.pixels == [OFF] * 400
@@ -569,12 +603,16 @@ async def test_device_errors(
     fake.max_movies = len(fake.movies)  # the lights hold no more movies
     error = await _error(ws, "effect/play", spec=CHASE)
     assert error["code"] == "device_error"
-    assert error["message"].startswith("The lights hold as many movies as they can store")
+    assert error["message"].startswith(
+        "The lights hold as many movies as they can store"
+    )
 
     fake.fail_with_connection_error = True
     error = await _error(ws, "builtin", effect_id=1)
     assert error["code"] == "device_error"
-    assert error["message"].startswith("The Twinkly lights could not carry out the command")
+    assert error["message"].startswith(
+        "The Twinkly lights could not carry out the command"
+    )
 
 
 async def test_read_only_user_refused(
@@ -584,7 +622,9 @@ async def test_read_only_user_refused(
     hass_read_only_access_token: str,
 ) -> None:
     ws = await hass_ws_client(hass, hass_read_only_access_token)
-    assert (await _ok(ws, "state"))["led_count"] == 400  # reading needs read permission only
+    assert (await _ok(ws, "state"))[
+        "led_count"
+    ] == 400  # reading needs read permission only
     error = await _error(ws, "paint", leds=[0], color=list(RED))
     assert error["code"] == "unauthorized"
     assert entry.runtime_data.store.canvas.pixels == [OFF] * 400

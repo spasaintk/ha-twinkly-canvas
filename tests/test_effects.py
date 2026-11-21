@@ -73,7 +73,9 @@ def test_keep_others(kind: str, base: Canvas) -> None:
 
 @pytest.mark.parametrize("kind", EFFECT_KINDS)
 def test_keep_others_leaves_other_leds_untouched(kind: str) -> None:
-    base = Canvas(400, [(i % 256, i // 256, 255 - i % 256, i * 7 % 256) for i in range(400)])
+    base = Canvas(
+        400, [(i % 256, i // 256, 255 - i % 256, i * 7 % 256) for i in range(400)]
+    )
     spec = EffectSpec(kind, (0, *LEDS, 399))
     outside = [i for i in range(400) if i not in spec.leds]
     expected = [_led(base.to_frame("RGBW"), i) for i in outside]

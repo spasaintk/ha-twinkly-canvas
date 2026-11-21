@@ -67,7 +67,16 @@ def test_set_checks_every_index_before_changing_any() -> None:
 
 @pytest.mark.parametrize(
     "color",
-    [(1, 2, 3), (1, 2, 3, 4, 5), (256, 0, 0, 0), (-1, 0, 0, 0), (True, 0, 0, 0), (1.0, 0, 0, 0), "red", None],
+    [
+        (1, 2, 3),
+        (1, 2, 3, 4, 5),
+        (256, 0, 0, 0),
+        (-1, 0, 0, 0),
+        (True, 0, 0, 0),
+        (1.0, 0, 0, 0),
+        "red",
+        None,
+    ],
 )
 def test_bad_color_rejected(color) -> None:
     c = Canvas(2)

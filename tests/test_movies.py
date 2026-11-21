@@ -52,7 +52,10 @@ def test_plan_counts_freed_frames():
 
 def test_plan_fits_exactly():
     """94 free + 10 + 4 freed is exactly 100 new + 4 overhead + 4 margin."""
-    assert plan_upload(_state([_m(0, "a-uid", 10)], available=94), {"a-uid"}, 100).fits is True
+    assert (
+        plan_upload(_state([_m(0, "a-uid", 10)], available=94), {"a-uid"}, 100).fits
+        is True
+    )
     plan = plan_upload(_state([_m(0, "a-uid", 10)], available=93), {"a-uid"}, 100)
     assert plan.reason == "memory_full"
 
@@ -103,7 +106,9 @@ def test_delete_uses_the_listed_uid():
     uid = "ABCDEF01-0000-4000-8000-000000000001"
     st = MovieState.from_api(
         {
-            "movies": [{"id": 0, "unique_id": uid, "name": "n", "frames_number": 5, "fps": 11}],
+            "movies": [
+                {"id": 0, "unique_id": uid, "name": "n", "frames_number": 5, "fps": 11}
+            ],
             "available_frames": 100,
             "max_capacity": 2536,
             "max": 55,
@@ -113,7 +118,9 @@ def test_delete_uses_the_listed_uid():
 
 
 def test_from_api_max_fallback():
-    st = MovieState.from_api({"movies": [], "available_frames": 1, "max_capacity": 2}, 40)
+    st = MovieState.from_api(
+        {"movies": [], "available_frames": 1, "max_capacity": 2}, 40
+    )
     assert st.max_movies == 40
 
 

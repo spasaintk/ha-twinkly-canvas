@@ -2,7 +2,8 @@
 
 from datetime import timedelta
 
-from homeassistant.const import CONF_HOST as CONF_HOST, Platform  # CONF_HOST: re-export
+from homeassistant.const import CONF_HOST as CONF_HOST  # CONF_HOST: re-export
+from homeassistant.const import Platform
 
 DOMAIN = "twinkly_canvas"
 PLATFORMS = [Platform.LIGHT]

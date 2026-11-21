@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import colorsys
 import re
+from collections.abc import Sequence
 
 RGBW = tuple[int, int, int, int]
 

@@ -6,7 +6,9 @@ from homeassistant.core import HomeAssistant
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.twinkly_canvas.canvas import Canvas
-from custom_components.twinkly_canvas.diagnostics import async_get_config_entry_diagnostics
+from custom_components.twinkly_canvas.diagnostics import (
+    async_get_config_entry_diagnostics,
+)
 from custom_components.twinkly_canvas.store import Active, Look
 
 from .fake_device import FakeTwinkly
@@ -18,7 +20,9 @@ async def test_diagnostics_redacts(
     data = entry.runtime_data
     data.store.save_group("Top", "1-10")
     data.store.save_look(Look("Gold", Canvas(400), None))
-    await data.device.async_show_canvas(Canvas(400), Active("painted", None))  # ours plays
+    await data.device.async_show_canvas(
+        Canvas(400), Active("painted", None)
+    )  # ours plays
     await data.coordinator.async_refresh()
     diag = await async_get_config_entry_diagnostics(hass, entry)
     text = json.dumps(diag)

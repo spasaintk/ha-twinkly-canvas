@@ -3,13 +3,13 @@
 import asyncio
 from datetime import timedelta
 
+import pytest
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import icon, selector, translation
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 from homeassistant.util.yaml import load_yaml_dict
-import pytest
 from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
 
 from custom_components.twinkly_canvas.canvas import Canvas
@@ -50,7 +50,9 @@ async def test_set_leds_service(
     store = entry.runtime_data.store
     store.set_canvas(Canvas(400, [RED] * 400))
     await _call(hass, "set_leds", leds="38-80 odd", color_name="silver")
-    assert _painted(store.canvas, SILVER) == list(range(38, 79, 2))  # LEDs 39, 41 ... 79
+    assert _painted(store.canvas, SILVER) == list(
+        range(38, 79, 2)
+    )  # LEDs 39, 41 ... 79
     assert store.canvas.pixels[37] == RED  # LED 38 unchanged
     assert store.canvas.pixels.count(RED) == 400 - 21
     assert fake.playing.frames == 1
@@ -255,9 +257,15 @@ async def test_action_descriptions(hass: HomeAssistant, entry: MockConfigEntry) 
     names = await translation.async_get_translations(hass, "en", "services", [DOMAIN])
     labels = await translation.async_get_translations(hass, "en", "selector", [DOMAIN])
     icons = (await icon.async_get_icons(hass, "services", [DOMAIN]))[DOMAIN]
-    assert set(actions) == set(icons) == set(hass.services.async_services_for_domain(DOMAIN))
+    assert (
+        set(actions)
+        == set(icons)
+        == set(hass.services.async_services_for_domain(DOMAIN))
+    )
     for action, description in actions.items():
-        assert description["target"] == {"entity": {"integration": DOMAIN, "domain": "light"}}
+        assert description["target"] == {
+            "entity": {"integration": DOMAIN, "domain": "light"}
+        }
         key = f"component.{DOMAIN}.services.{action}"
         assert names[f"{key}.name"]
         assert names[f"{key}.description"]
@@ -273,6 +281,10 @@ async def test_action_descriptions(hass: HomeAssistant, entry: MockConfigEntry) 
     for translation_key, (field, values) in selects.items():
         select = field["selector"]["select"]
         assert select["translation_key"] == translation_key
-        assert select["options"] == [v.replace(" ", "_") for v in values]  # "off" a string
+        assert select["options"] == [
+            v.replace(" ", "_") for v in values
+        ]  # "off" a string
         for option in select["options"]:
-            assert labels[f"component.{DOMAIN}.selector.{translation_key}.options.{option}"]
+            assert labels[
+                f"component.{DOMAIN}.selector.{translation_key}.options.{option}"
+            ]

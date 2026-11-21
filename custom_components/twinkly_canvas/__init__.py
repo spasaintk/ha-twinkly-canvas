@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.typing import ConfigType
@@ -33,14 +34,18 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
+) -> bool:
     """Connect to the device, load its canvas and set up the light."""
     # First: the token fight with core twinkly can be what makes the rest fail.
     _update_core_twinkly_issue(hass, entry)
     client = TwinklyClient(entry.data[CONF_HOST], async_get_clientsession(hass))
     try:
         info = DeviceInfoData.from_api(
-            await client.gestalt(), await client.firmware_version(), await client.led_config()
+            await client.gestalt(),
+            await client.firmware_version(),
+            await client.led_config(),
         )
     except TwinklyError as err:
         raise ConfigEntryNotReady(
@@ -64,14 +69,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
+) -> bool:
     await hass.config_entries.async_unload_platforms_or_raise(entry, PLATFORMS)
     await entry.runtime_data.device.async_shutdown()
-    await entry.runtime_data.store.async_flush()  # a reload right after loads every change
+    await (
+        entry.runtime_data.store.async_flush()
+    )  # a reload right after loads every change
     return True
 
 
-async def async_remove_entry(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> None:
+async def async_remove_entry(
+    hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
+) -> None:
     """Delete the stored canvas, groups and looks."""
     # Unloading flushed the store, so no delayed save can write the file again after this.
     await CanvasStore(hass, entry.entry_id, 0).async_remove()
@@ -90,7 +101,9 @@ def core_twinkly_configured(hass: HomeAssistant, mac: str | None) -> bool:
     )
 
 
-def _update_core_twinkly_issue(hass: HomeAssistant, entry: TwinklyCanvasConfigEntry) -> None:
+def _update_core_twinkly_issue(
+    hass: HomeAssistant, entry: TwinklyCanvasConfigEntry
+) -> None:
     """Raise a repair issue while core twinkly has an entry for the same device."""
     issue_id = f"core_twinkly_conflict_{entry.entry_id}"
     if core_twinkly_configured(hass, entry.unique_id):

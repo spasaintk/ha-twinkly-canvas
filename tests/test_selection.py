@@ -59,7 +59,9 @@ def test_group_named_often_parses_once():
     group = ", ".join(f"{n}-{n + 270}" for n in range(1, 125))
     assert len(group) >= 1000
     start = time.perf_counter()
-    assert parse_selection(", ".join(["g"] * 2000), 400, {"g": group}) == list(range(394))
+    assert parse_selection(", ".join(["g"] * 2000), 400, {"g": group}) == list(
+        range(394)
+    )
     assert time.perf_counter() - start < 0.5
 
 

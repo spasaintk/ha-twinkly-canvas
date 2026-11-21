@@ -1,5 +1,6 @@
 """Tests for the light entity, run against the simulated device."""
 
+import pytest
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_MODE,
@@ -8,8 +9,10 @@ from homeassistant.components.light import (
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
     ATTR_SUPPORTED_COLOR_MODES,
-    DOMAIN as LIGHT_DOMAIN,
     ColorMode,
+)
+from homeassistant.components.light import (
+    DOMAIN as LIGHT_DOMAIN,
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
@@ -21,7 +24,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
-import pytest
 from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.twinkly_canvas.canvas import Canvas

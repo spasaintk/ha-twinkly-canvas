@@ -3,9 +3,9 @@
 from collections.abc import Generator
 from unittest.mock import patch
 
+import pytest
 from homeassistant.components.frontend import DATA_EXTRA_MODULE_URL, UrlManager
 from homeassistant.core import HomeAssistant
-import pytest
 from pytest_homeassistant.common import MockConfigEntry, mock_component
 
 from custom_components.twinkly_canvas.const import DOMAIN
