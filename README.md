@@ -135,8 +135,11 @@ same. Example: `1-20, 50, Top odd`.
   after using the app the integration logs in again on its next poll.
 - Movies made in the Twinkly app are never deleted. The integration only removes movies
   it created itself.
-- The light has limited movie memory. The integration keeps a memory meter and cleans
-  up stranded movies of its own.
+- The light has limited movie memory. The card's Moving tab shows a memory meter. A
+  movie of this integration that sits before a movie made in the Twinkly app is shown
+  as "N stranded": it is not removed automatically, because the integration only
+  removes its own movies after the last app movie. To free that memory, delete the app
+  movies after it in the Twinkly app; the next upload then removes the stranded ones.
 - Spatial effects are not supported yet.
 
 ## Development
