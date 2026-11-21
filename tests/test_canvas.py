@@ -51,3 +51,42 @@ def test_copy_is_independent() -> None:
     d = c.copy()
     d.set([0], (1, 1, 1, 1))
     assert c.pixels[0] == (0, 0, 0, 0)
+
+
+def test_b64_is_rgbw_per_led() -> None:
+    """The card decodes R,G,B,W per LED: a contract, not an implementation detail."""
+    assert Canvas(1, [(1, 2, 3, 4)]).to_b64() == "AQIDBA=="
+
+
+def test_set_checks_every_index_before_changing_any() -> None:
+    c = Canvas(2)
+    with pytest.raises(ValueError):
+        c.set([0, 2], (1, 2, 3, 4))
+    assert c.pixels[0] == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "color",
+    [(1, 2, 3), (1, 2, 3, 4, 5), (256, 0, 0, 0), (-1, 0, 0, 0), (True, 0, 0, 0), (1.0, 0, 0, 0), "red", None],
+)
+def test_bad_color_rejected(color) -> None:
+    c = Canvas(2)
+    with pytest.raises(ValueError):
+        c.set([0], color)
+    with pytest.raises(ValueError):
+        c.fill(color)
+    assert c.pixels == [(0, 0, 0, 0)] * 2
+
+
+def test_colors_stored_as_tuples() -> None:
+    c = Canvas(2)
+    c.set([0], [1, 2, 3, 4])
+    assert c.pixels == [(1, 2, 3, 4), (0, 0, 0, 0)]
+    c.fill([5, 6, 7, 8])
+    assert c.pixels == [(5, 6, 7, 8)] * 2
+    assert all(type(p) is tuple for p in c.pixels)
+
+
+def test_pixels_must_match_led_count() -> None:
+    with pytest.raises(ValueError):
+        Canvas(2, [(0, 0, 0, 0)])

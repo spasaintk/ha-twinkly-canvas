@@ -13,7 +13,7 @@ import math
 import random
 
 from .canvas import OFF, Canvas
-from .colors import NAMED_COLORS, RGBW, hsv_to_rgbw, scale, to_wire
+from .colors import NAMED_COLORS, RGBW, hsv_to_rgbw, parse_color, scale, to_wire
 
 EFFECT_KINDS = (
     "twinkle",
@@ -46,6 +46,7 @@ _LEDS_PER_SECOND: dict[str, tuple[float, float]] = {
     "rainbow": (100 / 30, 100 / 3),  # one colour wheel in 30 s to 3 s
 }
 
+_CROSSFADE_SECONDS = 0.3  # odd_even_swap
 _GAMMA = 2.2
 _LEVEL = [(v / 255) ** (1 / _GAMMA) for v in range(256)]  # drive -> perceived, 0..1
 
@@ -62,6 +63,9 @@ class EffectSpec:
     seed: int = 1
 
     def __post_init__(self) -> None:
+        # Lists and tuples must compare and hash alike; the dataclass is frozen.
+        object.__setattr__(self, "leds", tuple(self.leds))
+        object.__setattr__(self, "colors", tuple(parse_color(c) for c in self.colors))
         if self.kind not in EFFECT_KINDS:
             raise ValueError(f"Unknown effect: {self.kind!r}")
         if not 0 <= self.speed <= 1:
@@ -82,27 +86,23 @@ class EffectSpec:
     @classmethod
     def from_dict(cls, data: dict) -> EffectSpec:
         """Inverse of to_dict."""
-        return cls(
-            **{
-                **data,
-                "leds": tuple(data["leds"]),
-                "colors": tuple(tuple(c) for c in data["colors"]),
-            }
-        )
+        return cls(**data)
 
 
 def loop_length(spec: EffectSpec, fps: int, max_frames: int = 240) -> int:
     """Frames in one seamless loop: the speed's natural length, at most max_frames."""
-    colors = spec.colors or DEFAULT_COLORS[spec.kind]
+    colors = spec.colors or DEFAULT_COLORS.get(spec.kind, ())
     if spec.kind in _LEDS_PER_SECOND:
         cells = _cells(spec.kind, colors)
         seconds = len(cells) / _by_speed(spec, *_LEDS_PER_SECOND[spec.kind])
     elif spec.kind == "breathe":  # one fade per stop; one colour has two (dim, full)
         seconds = max(2, len(colors)) * _by_speed(spec, 4.0, 0.5)
-    elif spec.kind == "odd_even_swap":  # hold, 0.3 s fade, hold swapped, fade back
-        seconds = 2 * (_by_speed(spec, 5.0, 0.5) + 0.3)
-    else:  # twinkle: a fixed loop; speed sets how often each LED twinkles
+    elif spec.kind == "odd_even_swap":  # hold, crossfade, hold swapped, fade back
+        seconds = 2 * (_by_speed(spec, 5.0, 0.5) + _CROSSFADE_SECONDS)
+    elif spec.kind == "twinkle":  # a fixed loop; speed sets how often each LED twinkles
         seconds = 12.0
+    else:
+        raise ValueError(f"Unknown effect: {spec.kind!r}")
     return max(1, min(max_frames, round(seconds * fps)))
 
 
@@ -148,7 +148,7 @@ def _effect_colors(
     spec: EffectSpec, base: Canvas, leds: list[int], u: float, seconds: float
 ) -> list[RGBW]:
     """Colours of the effect LEDs at phase u (0..1) of a loop lasting seconds."""
-    colors = spec.colors or DEFAULT_COLORS[spec.kind]
+    colors = spec.colors or DEFAULT_COLORS.get(spec.kind, ())
     if spec.kind in _LEDS_PER_SECOND:
         cells = _cells(spec.kind, colors)
         shift = u * len(cells)
@@ -160,12 +160,14 @@ def _effect_colors(
         return [_sample(stops, k + _ease(x - k))] * len(leds)
     if spec.kind == "odd_even_swap":
         a, b = _two(colors)[:2]
-        fade = min(0.5, 0.3 / seconds)  # the 0.3 s crossfade as a share of the loop
+        fade = min(0.5, _CROSSFADE_SECONDS / seconds)  # the crossfade as a share of the loop
         swap = _ease((min(u, 1 - u) - 0.25) / fade + 0.5)  # 0 at the start, 1 halfway
         # Odd and even are LED numbers counted from 1: index 0 is LED 1 (odd).
         return [
             _fade(a, b, swap) if led % 2 == 0 else _fade(b, a, swap) for led in leds
         ]
+    if spec.kind != "twinkle":
+        raise ValueError(f"Unknown effect: {spec.kind!r}")
     # twinkle: each LED fades from its base colour to a twinkle colour and back
     rng = random.Random(spec.seed)
     per_loop = _by_speed(spec, 0.1, 1.0) * seconds  # twinkles per LED per loop
@@ -196,7 +198,9 @@ def _cells(kind: str, colors: tuple[RGBW, ...]) -> list[RGBW]:
     if kind == "wave":  # a smooth cycle through the colours over 50 LEDs
         stops = _two(colors)
         return [_sample(stops, j * len(stops) / 50) for j in range(50)]
-    return [hsv_to_rgbw(j / 100, 1, 1) for j in range(100)]  # rainbow
+    if kind == "rainbow":
+        return [hsv_to_rgbw(j / 100, 1, 1) for j in range(100)]
+    raise ValueError(f"Unknown moving pattern: {kind!r}")
 
 
 def _two(colors: tuple[RGBW, ...]) -> tuple[RGBW, ...]:

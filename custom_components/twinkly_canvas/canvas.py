@@ -5,9 +5,16 @@ from __future__ import annotations
 import base64
 from collections.abc import Iterable
 
-from .colors import RGBW, to_wire
+from .colors import RGBW, parse_color, to_wire
 
 OFF: RGBW = (0, 0, 0, 0)
+
+
+def _checked(color: RGBW) -> RGBW:
+    """The colour as a tuple; ValueError unless it is 4 ints 0-255 (r, g, b, w)."""
+    if not isinstance(color, (tuple, list)) or len(color) != 4:
+        raise ValueError(f"A canvas colour needs 4 values (r, g, b, w), got {color!r}")
+    return parse_color(color)  # checks each value: an int 0-255, not a bool
 
 
 class Canvas:
@@ -16,9 +23,12 @@ class Canvas:
     def __init__(self, led_count: int, pixels: list[RGBW] | None = None) -> None:
         self.led_count = led_count
         self.pixels: list[RGBW] = list(pixels) if pixels is not None else [OFF] * led_count
+        if len(self.pixels) != led_count:
+            raise ValueError(f"{len(self.pixels)} pixels given for {led_count} LEDs")
 
     def set(self, indices: Iterable[int], color: RGBW) -> None:
-        """Paint the given LEDs; validates every index before changing any."""
+        """Paint the given LEDs; validates the colour and every index before changing any."""
+        color = _checked(color)
         indices = list(indices)
         for i in indices:
             if not 0 <= i < self.led_count:
@@ -27,7 +37,7 @@ class Canvas:
             self.pixels[i] = color
 
     def fill(self, color: RGBW) -> None:
-        self.pixels = [color] * self.led_count
+        self.pixels = [_checked(color)] * self.led_count
 
     def copy(self) -> Canvas:
         return Canvas(self.led_count, self.pixels)

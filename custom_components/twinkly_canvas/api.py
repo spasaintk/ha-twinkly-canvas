@@ -25,11 +25,20 @@ class TwinklyAuthError(TwinklyError):
 
 
 class TwinklyResponseError(TwinklyError):
-    """The device answered with an error."""
+    """The device answered with an error, or with something that is not a Twinkly reply."""
 
-    def __init__(self, code: int | None) -> None:
-        super().__init__(f"Twinkly answered code {code}")
-        self.code = code  # the JSON "code", or the HTTP status of a failed request
+    def __init__(self, code: int | None, message: str) -> None:
+        super().__init__(message)
+        # The JSON "code", the HTTP status of a failed request, or None: not a Twinkly reply
+        # (not JSON, not an object, or without a field the client reads).
+        self.code = code
+
+
+def _field(reply: dict, key: str, request: str) -> Any:
+    """reply[key]; a reply without it raises TwinklyResponseError, never KeyError."""
+    if key not in reply:
+        raise TwinklyResponseError(None, f"Twinkly left {key!r} out of its reply to {request}")
+    return reply[key]
 
 
 class TwinklyClient:
@@ -69,17 +78,19 @@ class TwinklyClient:
                 if resp.status == HTTPStatus.UNAUTHORIZED:
                     raise TwinklyAuthError(f"{method} {path}: token rejected")
                 if resp.status != HTTPStatus.OK:
-                    raise TwinklyResponseError(resp.status)
+                    raise TwinklyResponseError(
+                        resp.status, f"Twinkly answered code {resp.status} to {method} {path}"
+                    )
                 reply = await resp.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError) as err:
             # str(), never repr(): the repr of some aiohttp errors holds the request headers.
             reason = str(err) or type(err).__name__
             raise TwinklyConnectionError(f"{method} {path}: {reason}") from err
         except ValueError as err:  # not JSON, so not a Twinkly reply (a wrong host, say)
-            raise TwinklyResponseError(None) from err
+            raise TwinklyResponseError(None, f"Not a Twinkly reply to {method} {path}") from err
         code = reply.get("code") if isinstance(reply, dict) else None
         if code != 1000:
-            raise TwinklyResponseError(code)
+            raise TwinklyResponseError(code, f"Twinkly answered code {code} to {method} {path}")
         return reply
 
     async def _login(self, seen_epoch: int) -> None:
@@ -88,10 +99,9 @@ class TwinklyClient:
                 return  # another call logged in while this one waited
             challenge = base64.b64encode(secrets.token_bytes(32)).decode()
             reply = await self._send("POST", "login", json={"challenge": challenge})
-            token = reply["authentication_token"]
-            await self._send(
-                "POST", "verify", token, json={"challenge-response": reply["challenge-response"]}
-            )
+            token = _field(reply, "authentication_token", "POST login")
+            response = _field(reply, "challenge-response", "POST login")
+            await self._send("POST", "verify", token, json={"challenge-response": response})
             self._token = token
             self.token_epoch += 1
 
@@ -114,7 +124,7 @@ class TwinklyClient:
         return await self._send("GET", "gestalt")
 
     async def firmware_version(self) -> str:
-        return (await self._send("GET", "fw/version"))["version"]
+        return _field(await self._send("GET", "fw/version"), "version", "GET fw/version")
 
     async def led_config(self) -> dict:
         return await self._call("GET", "led/config")
@@ -127,7 +137,9 @@ class TwinklyClient:
 
     async def get_brightness(self) -> int:
         reply = await self._call("GET", "led/out/brightness")
-        return 100 if reply.get("mode") == "disabled" else reply["value"]  # disabled: not dimmed
+        if reply.get("mode") == "disabled":
+            return 100  # not dimmed
+        return _field(reply, "value", "GET led/out/brightness")
 
     async def set_brightness(self, value: int) -> None:
         """Value 1-100."""
@@ -139,7 +151,8 @@ class TwinklyClient:
         return await self._call("GET", "led/effects")
 
     async def get_current_effect(self) -> int:
-        return (await self._call("GET", "led/effects/current"))["preset_id"]
+        reply = await self._call("GET", "led/effects/current")
+        return _field(reply, "preset_id", "GET led/effects/current")
 
     async def set_effect(self, effect_id: int) -> None:
         await self._call("POST", "led/effects/current", json={"effect_id": effect_id})

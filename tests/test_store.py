@@ -1,5 +1,6 @@
 """Tests for the persistent store."""
 
+import logging
 from typing import Any
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ from pytest_homeassistant.common import async_fire_time_changed_exact
 
 from custom_components.twinkly_canvas.canvas import OFF, Canvas
 from custom_components.twinkly_canvas.effects import EffectSpec
+from custom_components.twinkly_canvas.selection import SelectionError
 from custom_components.twinkly_canvas.store import Active, CanvasStore, Look
 
 ENTRY_ID = "test-entry"
@@ -168,6 +170,104 @@ async def test_group_validation(
     assert store.groups == {"x" * 40: "1-3"}
     store.delete_group("x" * 40)
     assert store.groups == {}
+
+
+async def test_group_names_unique_ignoring_case(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = await _load(hass)
+    with pytest.raises(SelectionError):
+        store.save_group("5", "1-3")  # would redefine LED 5
+    store.save_group("Corners", "1, 4")
+    store.save_group("corners", "2, 3")
+    assert store.groups == {"corners": "2, 3"}
+    store.delete_group(" CORNERS ")
+    assert store.groups == {}
+
+
+async def test_look_names(hass: HomeAssistant, hass_storage: dict[str, Any]) -> None:
+    store = await _load(hass)
+    for bad in ("", "   ", "x" * 41):
+        with pytest.raises(ValueError):
+            store.save_look(Look(bad, Canvas(LEDS), None))
+    store.save_look(Look("  Xmas ", Canvas(LEDS, [RED] * LEDS), None))
+    store.save_look(Look("x" * 40, Canvas(LEDS), None))
+    assert sorted(store.looks) == ["Xmas", "x" * 40]
+    assert store.looks["Xmas"].name == "Xmas"
+    for bad in ("", "x" * 41):
+        with pytest.raises(ValueError):
+            store.rename_look("Xmas", bad)
+    store.active = Active("look", "Xmas")
+
+    with patch.object(store._store, "async_delay_save") as delay_save:
+        store.rename_look("Xmas", "Xmas")
+        store.rename_look("Xmas", " Xmas ")
+    delay_save.assert_not_called()
+    assert sorted(store.looks) == ["Xmas", "x" * 40]
+
+    store.rename_look("Xmas", "XMAS")  # only the case changes
+    assert sorted(store.looks) == ["XMAS", "x" * 40]
+    assert store.looks["XMAS"].canvas.pixels == [RED] * LEDS
+    assert store.active == Active("look", "XMAS")
+    with pytest.raises(KeyError):
+        store.rename_look("Missing", "Other")
+
+
+async def test_delete_active_look(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = await _load(hass)
+    store.save_look(Look("A", Canvas(LEDS), None))
+    store.save_look(Look("B", Canvas(LEDS), None))
+    store.active = Active("look", "A")
+    store.delete_look("B")
+    assert store.active == Active("look", "A")
+    store.delete_look("A")
+    assert store.active == Active("painted", None)
+
+
+async def test_state_is_changed_only_through_the_store(
+    hass: HomeAssistant, hass_storage: dict[str, Any]
+) -> None:
+    store = await _load(hass)
+    with pytest.raises(AttributeError):
+        store.active.ref = "x"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        store.custom_effect = None  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        Look("A", Canvas(LEDS), None).name = "B"  # type: ignore[misc]
+
+
+async def test_load_fits_canvases_to_led_count(
+    hass: HomeAssistant,
+    hass_storage: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A device whose LED count changed keeps its canvas and looks: cut or padded with off."""
+    stored = [(i % 256, 1, 2, 3) for i in range(300)]
+    hass_storage[KEY] = {
+        "version": 1,
+        "data": {
+            "canvas": Canvas(300, stored).to_b64(),
+            "groups": {},
+            "looks": {"Big": {"canvas": Canvas(500, [RED] * 500).to_b64(), "effect": None}},
+            "custom_effect": None,
+            "our_movies": [],
+            "current_movie_uid": None,
+            "active": {"type": "painted", "ref": None},
+            "movie_counter": 0,
+        },
+    }
+    store = CanvasStore(hass, ENTRY_ID, 400)
+    await store.async_load()
+    assert store.canvas.pixels == stored + [OFF] * 100
+    assert store.looks["Big"].canvas.pixels == [RED] * 400
+    warnings = [
+        r
+        for r in caplog.records
+        if r.name == "custom_components.twinkly_canvas.store" and r.levelno == logging.WARNING
+    ]
+    assert len(warnings) == 1
 
 
 async def test_next_movie_name_increments(

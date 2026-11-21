@@ -1,12 +1,17 @@
-"""LED selection grammar: "1-3, 7, corners, 38-80 odd" -> 0-based indices."""
+"""LED selection grammar: "1-3, 7, corners odd" -> 0-based indices.
+
+A trailing filter (odd, even, every N, every N from M) applies to the whole selection.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 import re
 
+GROUP_NAME_MAX = 40
+
 _FILTER = re.compile(
-    r"\s+(odd|even|every\s+(\d+)(?:\s+from\s+(\d+))?)\s*$", re.IGNORECASE
+    r"\s+(odd|even|every\s+([0-9]{1,6})(?:\s+from\s+([0-9]{1,6}))?)\s*$", re.IGNORECASE
 )
 
 
@@ -15,7 +20,9 @@ class SelectionError(ValueError):
 
 
 def _number(text: str, led_count: int) -> int:
-    if not text.isdigit():
+    if not text:
+        raise SelectionError("Empty item: check for a stray comma or dash")
+    if not re.fullmatch(r"[0-9]{1,6}", text):
         raise SelectionError(f"'{text}' is not an LED number, range, 'all' or group")
     n = int(text)
     if not 1 <= n <= led_count:
@@ -27,12 +34,15 @@ def parse_selection(
     spec: str, led_count: int, groups: Mapping[str, str] | None = None
 ) -> list[int]:
     """Return sorted unique 0-based indices for a selection spec."""
-    spec = spec.strip()
+    spec = " ".join(spec.split())  # single spaces keep the filter search linear
+    if len(spec) > 10000:
+        raise SelectionError("Selection text is too long")
     if not spec:
         raise SelectionError("Selection is empty")
     flt = _FILTER.search(spec)
     if flt:
         spec = spec[: flt.start()]
+    spec = spec.removesuffix(",")  # "1-20," and "1-20, odd"
     lowered = {k.lower(): v for k, v in (groups or {}).items()}
     chosen: set[int] = set()  # 1-based numbers
     for part in (p.strip() for p in spec.split(",")):
@@ -46,6 +56,8 @@ def parse_selection(
             chosen.update(range(lo, hi + 1))
         else:
             chosen.add(_number(part, led_count))
+    if not chosen:
+        raise SelectionError("Selection matches no LEDs")
     if flt:
         kind = flt.group(1).lower()
         if kind == "odd":
@@ -61,6 +73,22 @@ def parse_selection(
     if not chosen:
         raise SelectionError("Selection matches no LEDs")
     return [n - 1 for n in sorted(chosen)]
+
+
+def validate_group_name(name: str) -> str:
+    """The stripped name; refuses names that a selection would read as something else."""
+    name = " ".join(name.split())  # selections collapse whitespace runs, so names must too
+    if not 1 <= len(name) <= GROUP_NAME_MAX:
+        raise SelectionError(f"A group name needs 1 to {GROUP_NAME_MAX} characters")
+    if name.lower() in ("all", "odd", "even"):
+        raise SelectionError(f"'{name}' is a reserved word in selections")
+    if re.fullmatch(r"[0-9 -]+", name):
+        raise SelectionError(f"'{name}' reads as an LED number or a range")
+    if "," in name:
+        raise SelectionError("A group name cannot contain a comma")
+    if _FILTER.search(" " + name):  # the space also catches a name that is only a filter
+        raise SelectionError(f"'{name}' ends in a filter (odd, even or every N)")
+    return name
 
 
 def format_selection(indices: Iterable[int]) -> str:

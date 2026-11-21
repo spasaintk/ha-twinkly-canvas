@@ -1,11 +1,14 @@
 """Tests for the LED selection grammar."""
 
+import time
+
 import pytest
 
 from custom_components.twinkly_canvas.selection import (
     SelectionError,
     format_selection,
     parse_selection,
+    validate_group_name,
 )
 
 
@@ -41,12 +44,51 @@ def test_overlap():
     assert parse_selection("1-5, 3-7", 400) == list(range(7))
 
 
+def test_trailing_comma_dropped():
+    assert parse_selection("1-20, odd", 400) == list(range(0, 20, 2))
+    assert parse_selection("1-20,", 400) == list(range(20))
+
+
 @pytest.mark.parametrize(
-    "spec", ["0", "401", "1-401", "abc", "", "1-5 every 0", "2-2 odd", "unknown"]
+    ("spec", "match"),
+    [
+        ("0", "outside"),
+        ("401", "outside"),
+        ("1-401", "outside"),
+        ("abc", "not an LED number"),
+        ("", "empty"),
+        ("1-5 every 0", "at least 1"),
+        ("2-2 odd", "no LEDs"),
+        ("unknown", "not an LED number"),
+        ("²", "not an LED number"),
+        ("1-²", "not an LED number"),
+        ("①", "not an LED number"),
+        ("9" * 5000, "not an LED number"),
+        ("1 every " + "9" * 5000, "not an LED number"),
+        ("1,,2", "Empty item"),
+        (",1", "Empty item"),
+        ("-5", "Empty item"),
+        ("5-", "Empty item"),
+        ("1" * 10001, "too long"),
+    ],
 )
-def test_errors(spec):
-    with pytest.raises(SelectionError):
+def test_errors(spec, match):
+    with pytest.raises(SelectionError, match=match):
         parse_selection(spec, 400)
+
+
+def test_nothing_to_filter():
+    with pytest.raises(SelectionError, match="no LEDs"):
+        parse_selection("all every 5", 0)
+
+
+def test_long_whitespace_is_fast():
+    """Whitespace runs collapse before the filter search, which stays linear."""
+    start = time.perf_counter()
+    assert parse_selection("1" + " " * 50000 + "odd", 400) == [0]
+    with pytest.raises(SelectionError):
+        parse_selection("1" + " " * 50000 + "2", 400)
+    assert time.perf_counter() - start < 1
 
 
 def test_nested_group_rejected():
@@ -57,3 +99,32 @@ def test_nested_group_rejected():
 def test_format_selection():
     assert format_selection([0, 1, 2, 6, 9, 10]) == "1-3, 7, 10-11"
     assert format_selection([]) == ""
+
+
+def test_validate_group_name():
+    assert validate_group_name(" Corners ") == "Corners"
+    assert validate_group_name("left-side") == "left-side"
+    assert validate_group_name("x" * 40) == "x" * 40
+
+
+@pytest.mark.parametrize(
+    ("name", "match"),
+    [
+        ("all", "reserved"),
+        ("ODD", "reserved"),
+        ("5", "number or a range"),
+        ("1-3", "number or a range"),
+        ("1 - 3", "number or a range"),
+        ("a,b", "comma"),
+        ("left odd", "filter"),
+        ("top every 2", "filter"),
+        ("top EVERY 2 from 3", "filter"),
+        ("every 5", "filter"),
+        ("", "1 to 40 characters"),
+        ("   ", "1 to 40 characters"),
+        ("x" * 41, "1 to 40 characters"),
+    ],
+)
+def test_validate_group_name_rejects(name, match):
+    with pytest.raises(SelectionError, match=match):
+        validate_group_name(name)

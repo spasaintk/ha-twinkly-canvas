@@ -31,7 +31,7 @@ def test_parse_sequences():
 
 
 @pytest.mark.parametrize(
-    "value", ["", "#12345", "#GGGGGG", "#-1-1-1", "#-f-f-f", "#+f+f+f", "# 1 2 3", "#ff 0 0", "#٠٠٠٠٠٠", [1, 2], [1, 2, 3, 4, 5], [256, 0, 0], [-1, 0, 0], "nope"]
+    "value", ["", "#12345", "#GGGGGG", "#-1-1-1", "#-f-f-f", "#+f+f+f", "# 1 2 3", "#ff 0 0", "#٠٠٠٠٠٠", [1, 2], [1, 2, 3, 4, 5], [256, 0, 0], [-1, 0, 0], "nope", 16711680, None, 1.5, [True, False, True]]
 )
 def test_parse_errors(value):
     with pytest.raises(ColorError):
@@ -40,7 +40,18 @@ def test_parse_errors(value):
 
 def test_to_wire_order():
     assert to_wire((1, 2, 3, 4), "RGBW") == bytes([4, 1, 2, 3])
-    assert to_wire((1, 2, 3, 4), "RGB") == bytes([1, 2, 3])
+    assert to_wire((10, 20, 30, 0), "RGB") == bytes([10, 20, 30])
+
+
+def test_to_wire_rgb_folds_white_in_as_warm_white():
+    assert to_wire((0, 0, 0, 255), "RGB") == bytes([255, 180, 107])
+    assert to_wire((200, 0, 0, 255), "RGB") == bytes([255, 180, 107])
+    assert to_wire((0, 0, 0, 128), "RGB") == bytes([128, 90, 54])
+
+
+def test_to_wire_unknown_profile():
+    with pytest.raises(ValueError):
+        to_wire((1, 2, 3, 4), "AWW")
 
 
 def test_blend_and_scale():
@@ -49,6 +60,8 @@ def test_blend_and_scale():
     assert scale((200, 100, 50, 10), 2) == (255, 200, 100, 20)
     assert blend((0, 0, 0, 0), (200, 0, 0, 0), 2) == (255, 0, 0, 0)
     assert scale((200, 0, 0, 0), -1) == (0, 0, 0, 0)
+    with pytest.raises(ValueError):
+        blend((1, 2, 3), (4, 5, 6, 7), 0.5)
 
 
 def test_hsv():

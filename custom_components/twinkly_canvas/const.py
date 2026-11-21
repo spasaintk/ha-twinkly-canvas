@@ -14,6 +14,7 @@ MAX_FRAMES_PER_MOVIE = 240
 MOVIE_OVERHEAD_FRAMES = 4  # measured on a real device
 MOVIE_MARGIN_FRAMES = 4
 MOVIE_NAME_MAX = 15
+DEFAULT_MAX_MOVIES = 15  # when the device reports no movie limit
 
 LIVE_DEBOUNCE = 0.6
 LIVE_COMMIT_AFTER = 3.0

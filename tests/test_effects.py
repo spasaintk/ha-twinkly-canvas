@@ -5,10 +5,12 @@ import json
 import pytest
 
 from custom_components.twinkly_canvas.canvas import Canvas
-from custom_components.twinkly_canvas.colors import NAMED_COLORS, to_wire
+from custom_components.twinkly_canvas.colors import NAMED_COLORS, ColorError, to_wire
 from custom_components.twinkly_canvas.effects import (
     EFFECT_KINDS,
     EffectSpec,
+    _cells,
+    _effect_colors,
     loop_length,
     render,
     render_frame,
@@ -70,6 +72,16 @@ def test_keep_others(kind: str, base: Canvas) -> None:
 
 
 @pytest.mark.parametrize("kind", EFFECT_KINDS)
+def test_keep_others_leaves_other_leds_untouched(kind: str) -> None:
+    base = Canvas(400, [(i % 256, i // 256, 255 - i % 256, i * 7 % 256) for i in range(400)])
+    spec = EffectSpec(kind, (0, *LEDS, 399))
+    outside = [i for i in range(400) if i not in spec.leds]
+    expected = [_led(base.to_frame("RGBW"), i) for i in outside]
+    for frame in render(spec, base, FPS):
+        assert [_led(frame, i) for i in outside] == expected
+
+
+@pytest.mark.parametrize("kind", EFFECT_KINDS)
 def test_budget_cap(kind: str, base: Canvas) -> None:
     for speed in (0, 0.5, 1):
         spec = EffectSpec(kind, LEDS, speed=speed)
@@ -120,6 +132,30 @@ def test_spec_roundtrip() -> None:
     )
     assert EffectSpec.from_dict(spec.to_dict()) == spec
     assert EffectSpec.from_dict(json.loads(json.dumps(spec.to_dict()))) == spec
+
+
+def test_spec_stores_tuples_and_parsed_colors() -> None:
+    listed = EffectSpec("chase", [1, 2], [[255, 0, 0]])
+    tupled = EffectSpec("chase", (1, 2), ((255, 0, 0, 0),))
+    assert listed == tupled
+    assert hash(listed) == hash(tupled)
+
+
+def test_spec_rejects_bad_color() -> None:
+    with pytest.raises(ColorError):
+        EffectSpec("chase", (1,), ((256, 0, 0, 0),))
+
+
+def test_unknown_kind_is_not_rendered_as_another(base: Canvas) -> None:
+    """A kind without its own branches raises instead of rendering as twinkle or rainbow."""
+    spec = EffectSpec("twinkle", LEDS)
+    object.__setattr__(spec, "kind", "sparkle")  # past the check in __post_init__
+    with pytest.raises(ValueError):
+        loop_length(spec, FPS)
+    with pytest.raises(ValueError):
+        _effect_colors(spec, base, list(LEDS), 0.0, 1.0)
+    with pytest.raises(ValueError):
+        _cells("sparkle", (RED,))
 
 
 def test_leds_outside_canvas(base: Canvas) -> None:

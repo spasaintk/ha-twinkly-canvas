@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .const import MOVIE_MARGIN_FRAMES, MOVIE_NAME_MAX, MOVIE_OVERHEAD_FRAMES
+from .const import (
+    DEFAULT_MAX_MOVIES,
+    MOVIE_MARGIN_FRAMES,
+    MOVIE_NAME_MAX,
+    MOVIE_OVERHEAD_FRAMES,
+)
 
 
 @dataclass(frozen=True)
 class DeviceMovie:
     id: int
-    unique_id: str  # lower-cased
+    unique_id: str  # lower-cased, for comparisons
     name: str
     frames: int
     fps: int
+    listed_uid: str  # exactly as the device listed it: DELETE needs this spelling
 
 
 @dataclass(frozen=True)
@@ -34,18 +40,19 @@ class MovieState:
                     m.get("name", ""),
                     m["frames_number"],
                     m["fps"],
+                    str(m["unique_id"]),
                 )
                 for m in data.get("movies", [])
             ),
             available_frames=data["available_frames"],
             max_capacity=data["max_capacity"],
-            max_movies=data.get("max", max_movies),
+            max_movies=data.get("max") or max_movies or DEFAULT_MAX_MOVIES,
         )
 
 
 @dataclass(frozen=True)
 class UploadPlan:
-    delete: tuple[str, ...]
+    delete: tuple[str, ...]  # listed_uid values, last movie first
     fits: bool
     reason: str | None  # "memory_full" or "too_many_movies"
 
@@ -68,7 +75,7 @@ def plan_upload(state: MovieState, ours: set[str], new_frames: int) -> UploadPla
         return UploadPlan((), False, "memory_full")
     if len(state.movies) - len(run) >= state.max_movies:
         return UploadPlan((), False, "too_many_movies")
-    return UploadPlan(tuple(m.unique_id for m in run), True, None)
+    return UploadPlan(tuple(m.listed_uid for m in run), True, None)
 
 
 def stranded(state: MovieState, ours: set[str]) -> int:

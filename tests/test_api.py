@@ -107,7 +107,7 @@ async def test_second_401_raises(client, aioclient_mock):
 
 async def test_bad_code_raises(client, aioclient_mock):
     aioclient_mock.get(f"{BASE}/led/mode", json={"code": 1103})
-    with pytest.raises(TwinklyResponseError) as err:
+    with pytest.raises(TwinklyResponseError, match="1103 to GET led/mode") as err:
         await client.get_mode()
     assert err.value.code == 1103
 
@@ -116,17 +116,45 @@ async def test_bad_code_raises(client, aioclient_mock):
 async def test_not_a_twinkly_reply_raises(client, aioclient_mock, reply):
     """A wrong host may answer 200 with a web page; that must stay a TwinklyError."""
     aioclient_mock.get(f"{BASE}/gestalt", **reply)
-    with pytest.raises(TwinklyResponseError) as err:
+    with pytest.raises(TwinklyResponseError, match="GET gestalt") as err:
         await client.gestalt()
     assert err.value.code is None
 
 
+@pytest.mark.parametrize(
+    ("path", "method"),
+    [
+        ("fw/version", "firmware_version"),
+        ("led/out/brightness", "get_brightness"),
+        ("led/effects/current", "get_current_effect"),
+    ],
+)
+async def test_reply_without_field_raises(client, aioclient_mock, path, method):
+    """A code-1000 reply that lacks the field the client reads stays a TwinklyError."""
+    aioclient_mock.get(f"{BASE}/{path}", json={"code": 1000})
+    with pytest.raises(TwinklyResponseError, match=f"GET {path}"):
+        await getattr(client, method)()
+
+
+@pytest.mark.parametrize("field", ["authentication_token", "challenge-response"])
+async def test_login_reply_without_field_raises(hass, aioclient_mock, field):
+    reply = {"authentication_token": "tok", "challenge-response": "cr", "code": 1000}
+    del reply[field]
+    aioclient_mock.post(f"{BASE}/login", json=reply)
+    aioclient_mock.post(f"{BASE}/verify", json={"code": 1000})
+    with pytest.raises(TwinklyResponseError, match="POST login"):
+        await TwinklyClient(HOST, async_get_clientsession(hass)).login()
+
+
 async def test_http_error_raises(client, aioclient_mock):
-    """Deleting the movie that plays answers HTTP 412; the client only raises."""
-    aioclient_mock.delete(f"{BASE}/movies/abc", status=412)
+    """Deleting the movie that plays answers HTTP 412; the client only raises, naming the request."""
+    aioclient_mock.delete(f"{BASE}/movies/ABC", status=412)
     with pytest.raises(TwinklyResponseError) as err:
-        await client.delete_movie("abc")
+        await client.delete_movie("ABC")
     assert err.value.code == 412
+    assert "DELETE" in str(err.value)
+    assert "movies/ABC" in str(err.value)
+    assert "tok" not in str(err.value)
 
 
 @pytest.mark.parametrize("exc", [aiohttp.ClientError, TimeoutError])
