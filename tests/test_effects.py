@@ -144,6 +144,15 @@ def test_odd_even_swap_fades(speed: float, stripes: Canvas) -> None:
         assert max(_jump(a, b) for a, b in zip(frames, frames[1:] + frames[:1])) <= 40
 
 
+def test_odd_even_swap_holds_when_fast(stripes: Canvas) -> None:
+    """At full speed the fade is only a share of each half: each colour still holds
+    for two frames or more, not just the one frame where the fade turns."""
+    frames = render(EffectSpec("odd_even_swap", ALL, speed=1), stripes, DEVICE_FPS)
+    first = [_led(frame, 0) for frame in frames]  # LED 1 over the loop
+    assert first.count(to_wire(RED, "RGBW")) >= 2
+    assert first.count(to_wire(SILVER, "RGBW")) >= 2
+
+
 def test_odd_even_swap_loop_lengths() -> None:
     """A longer fade fits in the same loop."""
     specs = [EffectSpec("odd_even_swap", ALL, speed=speed) for speed in (0, 0.5, 1)]
