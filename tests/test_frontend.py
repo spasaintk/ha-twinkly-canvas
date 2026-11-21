@@ -16,6 +16,8 @@ async def test_card_js_served(
     response = await client.get("/twinkly_canvas/twinkly-canvas-card.js")
     assert response.status == 200
     assert 'customElements.define("twinkly-canvas-card"' in await response.text()
+    for other in ("/twinkly_canvas/__init__.py", "/twinkly_canvas/"):  # only the card
+        assert (await client.get(other)).status == 404
 
     version = (await async_get_integration(hass, DOMAIN)).version
     assert f"/twinkly_canvas/twinkly-canvas-card.js?v={version}" in (

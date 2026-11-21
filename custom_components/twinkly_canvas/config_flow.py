@@ -55,9 +55,10 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
                     )
                 try:
                     info = DeviceInfoData.from_api(gestalt, firmware, None)
+                    abort = self._check(gestalt, info)
                 except KeyError, TypeError:  # setup would fail on the same gestalt
                     return self.async_abort(reason="unsupported_device")
-                if abort := self._check(gestalt, info):
+                if abort:
                     return self.async_abort(reason=abort)
                 unique_id = info.mac
                 if step_id == "user":
@@ -81,7 +82,7 @@ class TwinklyCanvasConfigFlow(ConfigFlow, domain=DOMAIN):
     def _check(self, gestalt: dict, info: DeviceInfoData) -> str | None:
         """The abort reason if this device cannot be used, else None."""
         # colors.to_wire supports only RGB and RGBW (not the Gold AWW strings)
-        if info.profile not in ("RGB", "RGBW"):
+        if info.profile not in ("RGB", "RGBW") or info.led_count < 1:
             return "unsupported_device"
         if gestalt.get("compatibility_mode") == "disabled":
             return "compatibility_mode_off"

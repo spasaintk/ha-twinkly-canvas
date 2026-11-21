@@ -110,6 +110,7 @@ async def test_unsupported_firmware(hass: HomeAssistant) -> None:
         {"led_profile": "AWW"},  # Gold strings: no colour LEDs
         {"bytes_per_led": None},  # LED information missing
         {"led_profile": None, "bytes_per_led": 4},
+        {"number_of_led": 0},
     ],
 )
 async def test_unsupported_device(hass: HomeAssistant, gestalt: dict) -> None:

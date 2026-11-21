@@ -43,10 +43,10 @@ async def async_setup_entry(
     _update_core_twinkly_issue(hass, entry)
     client = TwinklyClient(entry.data[CONF_HOST], async_get_clientsession(hass))
     try:
+        gestalt = await client.gestalt()
+        _check_gestalt(entry, gestalt)  # before logging in to whatever answers
         info = DeviceInfoData.from_api(
-            await client.gestalt(),
-            await client.firmware_version(),
-            await client.led_config(),
+            gestalt, await client.firmware_version(), await client.led_config()
         )
     except TwinklyError as err:
         raise ConfigEntryNotReady(
@@ -95,6 +95,29 @@ async def async_remove_entry(
     """Delete the stored canvas, groups and looks."""
     # Unloading flushed the store, so no delayed save can write the file again after this.
     await CanvasStore(hass, entry.entry_id, 0).async_remove()
+
+
+def _check_gestalt(entry: TwinklyCanvasConfigEntry, gestalt: dict) -> None:
+    """Refuse for now a device this entry cannot drive.
+
+    KeyError or TypeError when the gestalt cannot be read.
+    """
+    if format_mac(gestalt["mac"]) != entry.unique_id:  # the address went to another one
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN,
+            translation_key="wrong_device",
+            translation_placeholders={"host": entry.data[CONF_HOST]},
+        )
+    if gestalt.get("compatibility_mode") == "disabled":
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN, translation_key="compatibility_mode_off"
+        )
+    if gestalt["number_of_led"] < 1:
+        raise ConfigEntryNotReady(
+            translation_domain=DOMAIN,
+            translation_key="unsupported_device",
+            translation_placeholders={"error": "the lights report no LEDs"},
+        )
 
 
 def core_twinkly_configured(hass: HomeAssistant, mac: str | None) -> bool:

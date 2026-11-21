@@ -147,6 +147,38 @@ async def test_setup_fails_on_unreadable_gestalt(
     assert config_entry.reason.startswith("Twinkly Canvas cannot read")
 
 
+@pytest.mark.parametrize(
+    ("gestalt", "key", "reason"),
+    [
+        (
+            {**GESTALT, "mac": "aa:bb:cc:00:11:33"},
+            "wrong_device",
+            "A different Twinkly answers at 192.0.2.10",
+        ),
+        (
+            {**GESTALT, "compatibility_mode": "disabled"},
+            "compatibility_mode_off",
+            "Compatibility mode is turned off",
+        ),
+        ({**GESTALT, "number_of_led": 0}, "unsupported_device", "Twinkly Canvas"),
+    ],
+)
+async def test_setup_waits_for_a_device_it_can_drive(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    fake: FakeTwinkly,
+    gestalt: dict,
+    key: str,
+    reason: str,
+) -> None:
+    fake.gestalt = AsyncMock(return_value=gestalt)  # type: ignore[method-assign]
+    assert not await hass.config_entries.async_setup(config_entry.entry_id)
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert config_entry.error_reason_translation_key == key
+    assert config_entry.reason.startswith(reason)
+    assert fake.calls == []  # refused before logging in to whatever answers
+
+
 async def test_core_twinkly_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

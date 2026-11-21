@@ -33,6 +33,8 @@
     "device_error": { "message": "The Twinkly lights could not carry out the command: {error}" },
     "update_failed": { "message": "Could not read the state of the Twinkly lights: {error}" },
     "unsupported_device": { "message": "Twinkly Canvas cannot read the device information of these lights: {error}" },
+    "wrong_device": { "message": "A different Twinkly answers at {host}. Reconfigure the address." },
+    "compatibility_mode_off": { "message": "Compatibility mode is turned off on these lights. Turn it on in the Twinkly app." },
     "unknown_look": { "message": "There is no look named \"{name}\"." },
     "unknown_group": { "message": "There is no group named \"{name}\"." },
     "unknown_effect": { "message": "These lights have no effect \"{effect}\"." },
