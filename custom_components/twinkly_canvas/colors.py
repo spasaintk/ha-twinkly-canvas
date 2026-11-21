@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import colorsys
+import re
 
 RGBW = tuple[int, int, int, int]
 
@@ -39,12 +40,9 @@ def parse_color(value: str | Sequence[int]) -> RGBW:
         text = value.strip().lower()
         if text.startswith("#"):
             digits = text[1:]
-            if len(digits) not in (6, 8):
+            if not re.fullmatch(r"[0-9a-f]{6}(?:[0-9a-f]{2})?", digits):
                 raise ColorError(f"Invalid hex colour: {value!r}")
-            try:
-                parts = [int(digits[i : i + 2], 16) for i in range(0, len(digits), 2)]
-            except ValueError as err:
-                raise ColorError(f"Invalid hex colour: {value!r}") from err
+            parts = [int(digits[i : i + 2], 16) for i in range(0, len(digits), 2)]
             return (*parts, *([0] * (4 - len(parts))))  # type: ignore[return-value]
         name = text.replace("_", " ")
         if name not in NAMED_COLORS:
