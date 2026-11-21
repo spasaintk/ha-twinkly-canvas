@@ -1,0 +1,199 @@
+"""Tests for the light entity, run against the simulated device."""
+
+from datetime import timedelta
+
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_COLOR_MODE,
+    ATTR_EFFECT,
+    ATTR_EFFECT_LIST,
+    ATTR_RGBW_COLOR,
+    DOMAIN as LIGHT_DOMAIN,
+    ColorMode,
+)
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    SERVICE_TURN_OFF,
+    SERVICE_TURN_ON,
+    STATE_OFF,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
+import pytest
+from pytest_homeassistant.common import MockConfigEntry, async_fire_time_changed
+
+from custom_components.twinkly_canvas.canvas import Canvas
+from custom_components.twinkly_canvas.effects import EffectSpec
+from custom_components.twinkly_canvas.store import Look
+
+from .fake_device import FakeTwinkly
+
+ENTITY = "light.test_tree"
+BUILTINS = [f"Built-in {n}" for n in range(1, 6)]
+APPS = [f"App: App movie {n}" for n in range(1, 8)]
+
+
+async def _advance(hass: HomeAssistant, seconds: float) -> None:
+    """Run the timers due within the next seconds."""
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=seconds))
+    await hass.async_block_till_done()
+
+
+async def _turn_on(hass: HomeAssistant, **data) -> None:
+    await hass.services.async_call(
+        LIGHT_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: ENTITY, **data}, blocking=True
+    )
+
+
+async def _turn_off(hass: HomeAssistant) -> None:
+    await hass.services.async_call(
+        LIGHT_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: ENTITY}, blocking=True
+    )
+
+
+def _attr(hass: HomeAssistant, name: str):
+    return hass.states.get(ENTITY).attributes[name]
+
+
+async def test_light_state(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    state = hass.states.get(ENTITY)
+    assert state.state == STATE_ON
+    assert state.attributes[ATTR_BRIGHTNESS] == 255  # device brightness 100
+    assert state.attributes[ATTR_EFFECT_LIST] == ["Painted", *BUILTINS, *APPS]
+    assert state.attributes[ATTR_EFFECT] == "Built-in 1"
+    # HA accepts BRIGHTNESS (or ONOFF) besides the supported modes while an effect runs
+    assert state.attributes[ATTR_COLOR_MODE] == ColorMode.BRIGHTNESS
+
+
+async def test_color_mode_without_effect(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.mode = "color"  # set by the app: not an effect list entry
+    await entry.runtime_data.coordinator.async_refresh()
+    assert _attr(hass, ATTR_EFFECT) is None
+    # without an effect HA accepts only the supported modes
+    assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.RGBW
+
+
+async def test_effect_list_order(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    store = entry.runtime_data.store
+    store.save_look(Look("Tinsel", Canvas(400), None))
+    store.save_look(Look("angel", Canvas(400), None))
+    store.set_custom_effect(EffectSpec("chase", tuple(range(20))))
+    fake.add_app_movie("App movie 1", 10)
+    fake.add_app_movie("App movie 1", 10)
+    await entry.runtime_data.coordinator.async_refresh()
+    assert _attr(hass, ATTR_EFFECT_LIST) == [
+        "Painted",
+        "Custom effect",
+        "Look: angel",
+        "Look: Tinsel",
+        *BUILTINS,
+        *APPS,
+        "App: App movie 1 (2)",
+        "App: App movie 1 (3)",
+    ]
+
+
+async def test_turn_on_rgbw_fills_canvas(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_on(hass, rgbw_color=(10, 20, 30, 40))
+    assert fake.playing.data == bytes([40, 10, 20, 30]) * 400
+    assert _attr(hass, ATTR_EFFECT) == "Painted"
+    assert _attr(hass, ATTR_COLOR_MODE) == ColorMode.RGBW
+    assert _attr(hass, ATTR_RGBW_COLOR) == (10, 20, 30, 40)
+    assert "App: " + fake.playing.name not in _attr(hass, ATTR_EFFECT_LIST)
+
+
+async def test_turn_on_effect_builtin(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_on(hass, effect="Built-in 3")
+    assert (fake.mode, fake.effect_id) == ("effect", 2)
+    assert _attr(hass, ATTR_EFFECT) == "Built-in 3"
+
+
+async def test_turn_on_effect_look(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    canvas = Canvas(400)
+    canvas.set(range(10), (255, 215, 0, 0))
+    entry.runtime_data.store.save_look(Look("Gold", canvas, None))
+    await _turn_on(hass, effect="Look: Gold")
+    assert fake.playing.data == canvas.to_frame("RGBW")
+    assert _attr(hass, ATTR_EFFECT) == "Look: Gold"
+
+
+async def test_turn_on_effect_app_movie(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_on(hass, effect="App: App movie 3")
+    assert fake.playing is fake.movies[2]
+    assert _attr(hass, ATTR_EFFECT) == "App: App movie 3"
+
+
+async def test_turn_on_effect_custom_then_painted(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    entry.runtime_data.store.set_custom_effect(EffectSpec("chase", tuple(range(20))))
+    await _turn_on(hass, effect="Custom effect")
+    assert fake.playing.frames > 1
+    assert _attr(hass, ATTR_EFFECT) == "Custom effect"
+    await _turn_on(hass, effect="Painted")
+    assert fake.playing.frames == 1
+    assert fake.playing.data == bytes(1600)  # the canvas: all off
+
+
+async def test_turn_on_unknown_effect(
+    hass: HomeAssistant, entry: MockConfigEntry
+) -> None:
+    with pytest.raises(ServiceValidationError) as err:
+        await _turn_on(hass, effect="Look: Missing")
+    assert err.value.translation_key == "unknown_effect"
+
+
+async def test_turn_off(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_off(hass)
+    assert fake.mode == "off"
+    assert hass.states.get(ENTITY).state == STATE_OFF
+
+
+async def test_brightness(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_on(hass, brightness=128)
+    assert fake.brightness == 50
+    assert (fake.mode, fake.effect_id) == ("effect", 0)  # what plays keeps playing
+    assert _attr(hass, ATTR_BRIGHTNESS) == 128
+
+    await _turn_on(hass, brightness=0)  # HA's light service turns 0 into turn_off
+    assert fake.mode == "off"
+
+
+async def test_brightness_turns_on_when_off(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    await _turn_off(hass)
+    await _turn_on(hass, brightness=128)
+    assert fake.brightness == 50
+    assert fake.mode != "off"
+
+
+async def test_unavailable_when_unreachable(
+    hass: HomeAssistant, entry: MockConfigEntry, fake: FakeTwinkly
+) -> None:
+    fake.fail_with_connection_error = True
+    await _advance(hass, 61)
+    assert hass.states.get(ENTITY).state == STATE_UNAVAILABLE
+
+    fake.fail_with_connection_error = False
+    await _advance(hass, 61)
+    assert hass.states.get(ENTITY).state == STATE_ON

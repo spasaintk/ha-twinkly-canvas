@@ -25,5 +25,21 @@
       "unique_id_mismatch": "This host belongs to a different device than the one you are reconfiguring.",
       "reconfigure_successful": "The host was updated."
     }
+  },
+  "exceptions": {
+    "memory_full": { "message": "There is not enough free memory on the lights for this. Delete movies you no longer need in the Twinkly app and try again." },
+    "too_many_movies": { "message": "The lights hold as many movies as they can store. Delete a movie you no longer need in the Twinkly app and try again." },
+    "device_error": { "message": "The Twinkly lights could not carry out the command: {error}" },
+    "update_failed": { "message": "Could not read the state of the Twinkly lights: {error}" },
+    "unknown_look": { "message": "There is no look named \"{name}\"." },
+    "unknown_effect": { "message": "These lights have no effect \"{effect}\"." },
+    "invalid_selection": { "message": "Invalid LED selection: {error}" },
+    "invalid_color": { "message": "Give exactly one colour: an RGB colour or a colour name." }
+  },
+  "issues": {
+    "core_twinkly_conflict": {
+      "title": "{name} is also set up with the built-in Twinkly integration",
+      "description": "The lights accept one login at a time, so Twinkly Canvas and Home Assistant's built-in Twinkly integration keep logging each other out of {name}. Remove the built-in Twinkly entry for these lights under Settings > Devices & services > Twinkly, then reload Twinkly Canvas."
+    }
   }
 }
