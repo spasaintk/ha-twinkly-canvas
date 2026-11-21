@@ -23,8 +23,7 @@ def fake() -> Generator[FakeTwinkly]:
 @pytest.fixture
 def config_entry(hass: HomeAssistant) -> MockConfigEntry:
     """An entry for the simulated device, not set up yet."""
-    mock_component(hass, "frontend")  # the manifest dependencies count as set up
-    mock_component(hass, "http")
+    mock_component(hass, "frontend")  # needs hass_frontend; http is set up for real
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id=GESTALT["mac"],

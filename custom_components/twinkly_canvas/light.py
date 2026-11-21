@@ -211,14 +211,20 @@ class TwinklyCanvasLight(TwinklyCanvasEntity, LightEntity):
         self, kind: str, colors: list, leds: str, speed: float, keep_others: bool
     ) -> None:
         """Play a moving effect (speed 0-100) and keep it as the custom effect."""
-        with _invalid("invalid_color"):
-            parsed = tuple(parse_color(c) for c in colors)
-        spec = EffectSpec(kind, tuple(self._selection(leds)), parsed, speed / 100, keep_others)
+        spec = self.effect_spec(kind, colors, leds, speed, keep_others)
         await self.device.async_play_effect(
             spec, self.store.canvas, Active("custom_effect", None)
         )
         self.store.set_custom_effect(spec)  # once it plays: a failed upload keeps the old one
         await self.coordinator.async_request_refresh()
+
+    def effect_spec(
+        self, kind: str, colors: list, leds: str, speed: float, keep_others: bool
+    ) -> EffectSpec:
+        """The checked effect for play_effect's arguments; the card's preview uses it too."""
+        with _invalid("invalid_color"):
+            parsed = tuple(parse_color(c) for c in colors)
+        return EffectSpec(kind, tuple(self._selection(leds)), parsed, speed / 100, keep_others)
 
     async def async_apply_look(self, look: str) -> None:
         await self.device.async_apply_look(look)
