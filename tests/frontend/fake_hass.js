@@ -1,7 +1,9 @@
 // A stand-in for Home Assistant's hass object with one Twinkly Canvas light of 400 LEDs.
 // callWS answers twinkly_canvas/state from the fixture below (window.__state) and records
-// every call in window.__calls; group and look commands change the fixture like the
-// integration would. Set window.__fail to a message to make the next command fail like HA.
+// every call in window.__calls; paint, commit, group and look commands change the fixture
+// like the integration would. Set window.__fail to a message to make the next command fail
+// like HA. Set window.__hold to a command to hold its next reply until window.__release(),
+// which returns once the card has handled that reply.
 (() => {
   const RED = [255, 0, 0, 0];
   const SILVER = [192, 192, 192, 0];
@@ -62,6 +64,7 @@
   // a preview loop: LED 1 green, then blue; the other LEDs as painted
   const frame = (rgbw) => btoa(String.fromCharCode(...rgbw) + bytes.slice(4));
   const render = { fps: 10, frames: [frame([0, 200, 40, 0]), frame([0, 60, 255, 0])] };
+  window.__render = render;  // the integration may answer a fractional fps
   const named = (name) => (look) => look.name.toLowerCase() === name.trim().toLowerCase();
 
   window.__state = state;
@@ -79,14 +82,29 @@
     themes: { darkMode: false, theme: "default", themes: {} },
     async callWS(msg) {
       window.__calls.push(msg);
-      if (window.__fail) {
-        const message = window.__fail;
-        window.__fail = null;
-        throw { code: "device_error", message };  // what hass.callWS rejects with
-      }
       const command = msg.type.replace("twinkly_canvas/", "");
+      const failure = window.__fail;  // the next command fails, also when its reply is held
+      window.__fail = null;
+      if (window.__hold === command) {
+        window.__hold = null;
+        await new Promise((resolve) => {
+          window.__release = () => {
+            resolve();
+            return new Promise((done) => setTimeout(done));  // the card's handling runs first
+          };
+        });
+      }
+      if (failure) throw { code: "device_error", message: failure };  // what hass.callWS rejects with
       if (command === "state") return structuredClone(state);
       if (command === "effect/render") return structuredClone(render);
+      if (command === "paint") {  // the stored canvas, live or not
+        const leds = Uint8Array.from(atob(state.canvas), (c) => c.charCodeAt(0));
+        for (const i of msg.leds) leds.set(msg.color, i * 4);
+        state.canvas = btoa(String.fromCharCode(...leds));
+      }
+      if (command === "commit") {  // Apply always ends with the painting playing
+        Object.assign(state, { active: { type: "painted", ref: null }, mode: "movie" });
+      }
       if (command === "group/save") state.groups[msg.name] = msg.leds;
       if (command === "group/delete") delete state.groups[msg.name];
       if (command === "look/delete") state.looks = state.looks.filter((l) => !named(msg.name)(l));

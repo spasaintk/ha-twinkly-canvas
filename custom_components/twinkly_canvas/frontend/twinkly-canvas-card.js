@@ -23,11 +23,15 @@ const EDITOR_SCHEMA = [
   { name: "entity", selector: { entity: { integration: DOMAIN, domain: "light" } } },
 ];
 
-/** The 0-based LEDs of a group's selection text: "1-20, 45 odd", "all", "all every 3 from 2". */
+// a trailing filter, after a space or a comma: "1-20 odd", "1-20,every 3 from 2"
+const FILTER = /[\s,]\s*(odd|even|every\s+(\d{1,6})(?:\s+from\s+(\d{1,6}))?)\s*$/i;
+
+/** The 0-based LEDs of a group's selection text: "1-20, 45 odd", "all", "even", "every 3 from 2". */
 function parseSelection(text, count) {
   // the integration's grammar; a group's text never names another group
   let spec = text.trim().split(/\s+/).join(" ");
-  const filter = /[\s,]\s*(odd|even|every\s+(\d{1,6})(?:\s+from\s+(\d{1,6}))?)\s*$/i.exec(spec);
+  if (FILTER.exec(` ${spec}`)?.index === 0) spec = `all ${spec}`; // a filter alone: all LEDs
+  const filter = FILTER.exec(spec);
   spec = filter ? spec.slice(0, filter.index) : spec.replace(/,$/, "");
   let chosen = []; // numbers from 1
   for (const item of spec.split(",")) {
@@ -40,11 +44,13 @@ function parseSelection(text, count) {
   }
   if (filter) {
     const [, kind, step, from] = filter;
+    if (step && Number(step) < 1) throw new Error("'every' needs a step of at least 1");
     const start = from ? Number(from) : Math.min(...chosen);
     chosen = chosen.filter((n) =>
       step ? n >= start && (n - start) % Number(step) === 0 : n % 2 === (/odd/i.test(kind) ? 1 : 0)
     );
   }
+  if (!chosen.length) throw new Error("Selection matches no LEDs");
   return [...new Set(chosen)].sort((a, b) => a - b).map((n) => n - 1);
 }
 
@@ -65,6 +71,11 @@ function formatSelection(indices) {
 function shown([r, g, b, w]) {
   const mix = (c, k) => Math.min(255, Math.round(c + (w * k) / 255));
   return `rgb(${mix(r, WARM[0])}, ${mix(g, WARM[1])}, ${mix(b, WARM[2])})`;
+}
+
+/** A colour as a screen reader says it: its name when it is a named colour, else as shown. */
+function colourName(rgbw, colors) {
+  return Object.keys(colors).find((name) => colors[name].every((v, k) => v === rgbw[k])) ?? shown(rgbw);
 }
 
 /** What the lights show, from state.active; "" for a type this card does not know. */
@@ -98,6 +109,16 @@ function badge(text) {
   return span;
 }
 
+/** One tab stop in a group of controls: the stop gets tabindex 0, the others -1. */
+const rove = (items, stop) => items.forEach((item) => (item.tabIndex = item === stop ? 0 : -1));
+
+/** The index a key moves focus to, from moves ({ key: index }); undefined for other keys. */
+function keyTarget(e, moves) {
+  if (e.altKey || e.ctrlKey || e.metaKey || !Object.hasOwn(moves, e.key)) return undefined;
+  e.preventDefault(); // the page does not scroll
+  return moves[e.key];
+}
+
 const STYLE = `
   :host { display: block; }
   ha-card {
@@ -109,7 +130,7 @@ const STYLE = `
   [hidden] { display: none !important; }
   button, input, select { font: inherit; color: inherit; }
   button { cursor: pointer; }
-  button:disabled { cursor: default; opacity: 0.45; }
+  button:disabled, button[aria-disabled="true"] { cursor: default; opacity: 0.45; }
   :focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
   .error {
     margin-bottom: 12px; padding: 8px 12px; border-radius: 8px;
@@ -177,6 +198,8 @@ const STYLE = `
     margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 500;
     background: var(--primary-color); color: var(--text-primary-color);
   }
+  .sub { margin: 4px 0 8px; }
+  .movies { margin-top: 12px; }
   .stepper { display: flex; align-items: center; gap: 4px; }
   .icon { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 16px; }
   .sw { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 2px solid var(--divider-color); }
@@ -229,9 +252,9 @@ const STYLE = `
 const BODY = `
   <div class="head"><span class="name"></span><span class="now"></span></div>
   <div class="tabs" role="tablist">
-    <button class="tab" role="tab" id="tab-colours" data-tab="colours">Colours</button>
-    <button class="tab" role="tab" id="tab-moving" data-tab="moving">Moving</button>
-    <button class="tab" role="tab" id="tab-looks" data-tab="looks">Looks</button>
+    <button class="tab" role="tab" id="tab-colours" aria-controls="panel-colours" data-tab="colours">Colours</button>
+    <button class="tab" role="tab" id="tab-moving" aria-controls="panel-moving" data-tab="moving">Moving</button>
+    <button class="tab" role="tab" id="tab-looks" aria-controls="panel-looks" data-tab="looks">Looks</button>
   </div>
   <div class="leds">
     <div class="bar"><span class="label total"></span><span class="hint">tap to jump</span></div>
@@ -246,7 +269,7 @@ const BODY = `
     </div>
     <div class="page"></div>
   </div>
-  <div role="tabpanel" data-tab="colours" aria-labelledby="tab-colours">
+  <div role="tabpanel" id="panel-colours" data-tab="colours" aria-labelledby="tab-colours">
     <div class="label">Select</div>
     <div class="row">
       <label class="field">From <input class="from" type="number" inputmode="numeric" min="1"></label>
@@ -269,12 +292,13 @@ const BODY = `
     <div class="row between" style="margin-top: 16px">
       <label class="toggle"><input class="switch live" type="checkbox" role="switch" checked>Live on tree</label>
       <span class="row">
+        <button class="btn showpainting" hidden>Show painting</button>
         <button class="btn primary apply" hidden>Apply</button>
         <button class="btn find">Find on tree</button>
       </span>
     </div>
   </div>
-  <div role="tabpanel" data-tab="moving" aria-labelledby="tab-moving">
+  <div role="tabpanel" id="panel-moving" data-tab="moving" aria-labelledby="tab-moving">
     <div class="label">Make your own</div>
     <div class="row kinds"></div>
     <div class="label">Colours</div>
@@ -294,12 +318,19 @@ const BODY = `
     </div>
     <div class="section">
       <div class="label">Already on the lights</div>
-      <div class="row onlights"></div>
+      <div class="builtins" role="group" aria-labelledby="builtins-label">
+        <div class="hint sub" id="builtins-label">Built-in effects</div>
+        <div class="row"></div>
+      </div>
+      <div class="movies" role="group" aria-labelledby="movies-label">
+        <div class="hint sub" id="movies-label">From the Twinkly app</div>
+        <div class="row"></div>
+      </div>
       <div class="hint memtext" style="margin-top: 12px"></div>
       <div class="meter" aria-hidden="true"><div class="meterbar"></div></div>
     </div>
   </div>
-  <div role="tabpanel" data-tab="looks" aria-labelledby="tab-looks">
+  <div role="tabpanel" id="panel-looks" data-tab="looks" aria-labelledby="tab-looks">
     <div class="label">Looks you saved</div>
     <div class="looks"></div>
     <div class="row between" style="margin-top: 12px">
@@ -347,6 +378,7 @@ class TwinklyCanvasCard extends HTMLElement {
     this._stateObj = null; // never a state: the next hass loads this light
     this._built = this._canvas = undefined;
     this._sel = new Set();
+    this._fail(null); // the user changed the card: an older error no longer applies
     if (this._hass) this.hass = this._hass;
   }
 
@@ -366,6 +398,8 @@ class TwinklyCanvasCard extends HTMLElement {
   connectedCallback() {
     window.addEventListener("pointerup", this._endDrag);
     window.addEventListener("pointercancel", this._endDrag);
+    // HA re-attaches cached cards when the user comes back to the view: show what changed
+    if (this._config && this._hass) this._load();
   }
 
   disconnectedCallback() {
@@ -377,14 +411,13 @@ class TwinklyCanvasCard extends HTMLElement {
 
   async _ws(command, data = {}) {
     const msg = { type: `${DOMAIN}/${command}`, entity_id: this._config.entity, ...data };
-    const result = await this._hass.callWS(msg);
-    this._fail(null);
-    return result;
+    return this._hass.callWS(msg);
   }
 
   /** Run a command the user asked for; false (and the error shown) when it fails. */
   async _act(command, data) {
     this._stopPreview(); // another action ends a preview
+    this._fail(null); // and replaces an error the user has seen
     try {
       await this._ws(command, data);
       return true;
@@ -421,6 +454,9 @@ class TwinklyCanvasCard extends HTMLElement {
     if (this._built !== state.led_count) this._build();
     this._$.name.textContent = this._stateObj?.attributes.friendly_name ?? this._config.entity;
     this._$.now.textContent = nowShowing(state);
+    // the light plays something else: Show painting (a commit) brings the painting back
+    const { active, mode } = state;
+    this._$.showpainting.hidden = mode === "off" || ["off", "painted"].includes(active.type);
     const groups = Object.keys(state.groups);
     this._$.group.replaceChildren(
       new Option(groups.length ? "Group" : "No groups yet", ""),
@@ -440,14 +476,17 @@ class TwinklyCanvasCard extends HTMLElement {
     this._page = 0;
     this._sel = new Set([...this._sel].filter((i) => i < count));
     this._runsPicked = false;
+    this._stop = undefined; // the dots' tab stop: the dot focused last, else a page's first
+    const old = this._$; // a rebuild keeps the Moving settings as the user left them
     this._body.innerHTML = BODY;
     const q = (selector) => this._body.querySelector(selector);
     const $ = (this._$ = {});
     for (const name of [
       "name", "now", "leds", "total", "pagelabel", "prev", "pos", "next", "from", "to", "step",
-      "minus", "plus", "group", "save", "colourlabel", "swatches", "live", "apply", "find",
-      "kinds", "slots", "slothint", "mswatches", "runs", "keep", "speed", "preview", "play",
-      "onlights", "memtext", "meterbar", "looks", "lookhint", "savelook", "groups", "grouphint",
+      "minus", "plus", "group", "save", "colourlabel", "swatches", "live", "showpainting", "apply",
+      "find", "kinds", "slots", "slothint", "mswatches", "runs", "keep", "speed", "preview", "play",
+      "builtins", "movies", "memtext", "meterbar", "looks", "lookhint", "savelook", "groups",
+      "grouphint",
     ]) {
       $[name] = q(`.${name}`);
     }
@@ -456,6 +495,10 @@ class TwinklyCanvasCard extends HTMLElement {
     $.from.placeholder = "1";
     $.to.placeholder = String(count);
     $.live.checked = this._live; // a rebuild keeps the switch as the user left it
+    if (old) {
+      $.speed.value = old.speed.value;
+      $.keep.checked = old.keep.checked;
+    }
 
     // the overview: one strip per page, a bar per LED
     this._minis = [];
@@ -465,9 +508,19 @@ class TwinklyCanvasCard extends HTMLElement {
       const row = q(".overview").appendChild(el("button", "orow"));
       row.setAttribute("aria-label", `Show LEDs ${p * PAGE + 1}-${last}`);
       row.addEventListener("click", () => this._show(p));
+      // one tab stop: arrow keys move between the rows, Enter jumps to that page
+      row.addEventListener("focus", () => rove(this._orows, row));
+      row.addEventListener("keydown", (e) => {
+        const to = keyTarget(e, {
+          ArrowUp: p - 1, ArrowLeft: p - 1, ArrowDown: p + 1, ArrowRight: p + 1,
+          Home: 0, End: this._pages - 1,
+        });
+        this._orows[to]?.focus();
+      });
       for (let i = p * PAGE; i < last; i++) this._minis.push(row.appendChild(el("i")));
       this._orows.push(row);
     }
+    rove(this._orows, this._orows[0]);
 
     // the page: 4 rows of 25 dots, reused for every page
     this._dots = [];
@@ -485,13 +538,39 @@ class TwinklyCanvasCard extends HTMLElement {
         });
         dot.addEventListener("pointerenter", (e) => this._enter(led(), e));
         dot.addEventListener("click", (e) => e.detail === 0 && this._press(led(), e)); // keyboard
+        // one tab stop: arrow keys move by one, up and down by a row, Home and End to its ends
+        dot.addEventListener("focus", () => {
+          this._stop = led();
+          rove(this._dots, dot);
+        });
+        dot.addEventListener("keydown", (e) => {
+          const k = r * ROW + c;
+          const used = this._state.led_count - this._page * PAGE; // dots in use on this page
+          const to = this._dots[keyTarget(e, {
+            ArrowLeft: k - 1, ArrowRight: k + 1, ArrowUp: k - ROW, ArrowDown: k + ROW,
+            Home: r * ROW, End: Math.min(r * ROW + ROW, used) - 1,
+          })];
+          if (to && !to.hidden) to.focus();
+        });
         this._dots.push(dot);
       }
     }
 
     this._tabs = [...this._body.querySelectorAll('[role="tab"]')];
     this._panels = [...this._body.querySelectorAll('[role="tabpanel"]')];
-    for (const tab of this._tabs) tab.addEventListener("click", () => this._showTab(tab.dataset.tab));
+    this._tabs.forEach((tab, k) => {
+      tab.addEventListener("click", () => this._showTab(tab.dataset.tab));
+      // the tabs pattern: one tab stop, arrow keys select
+      tab.addEventListener("keydown", (e) => {
+        const n = this._tabs.length;
+        const to = this._tabs[keyTarget(e, {
+          ArrowLeft: (k + n - 1) % n, ArrowRight: (k + 1) % n, Home: 0, End: n - 1,
+        })];
+        if (!to) return;
+        this._showTab(to.dataset.tab);
+        to.focus();
+      });
+    });
     $.prev.addEventListener("click", () => this._show(this._page - 1));
     $.next.addEventListener("click", () => this._show(this._page + 1));
     $.from.addEventListener("input", () => this._selectRange());
@@ -507,6 +586,7 @@ class TwinklyCanvasCard extends HTMLElement {
     $.group.addEventListener("change", () => this._selectGroup());
     $.save.addEventListener("click", () => this._saveGroup());
     $.live.addEventListener("change", () => this._setLive($.live.checked));
+    $.showpainting.addEventListener("click", () => this._commit());
     $.apply.addEventListener("click", () => this._commit());
     $.find.addEventListener("click", () => this._find());
     this._paintControls = this._swatches($.swatches, (color) => this._paint(color));
@@ -541,7 +621,7 @@ class TwinklyCanvasCard extends HTMLElement {
     $.keep.addEventListener("change", () => this._draw());
     $.speed.addEventListener("input", () => this._draw());
     $.preview.addEventListener("click", () => this._preview());
-    $.play.addEventListener("click", () => this._run("effect/play", { spec: this._spec() }));
+    $.play.addEventListener("click", () => this._play());
     $.savelook.addEventListener("click", () => this._saveLook());
     this._showTab(this._tab);
   }
@@ -573,7 +653,9 @@ class TwinklyCanvasCard extends HTMLElement {
     this._tab = tab;
     this._stopPreview();
     for (const button of this._tabs) {
-      button.setAttribute("aria-selected", String(button.dataset.tab === tab));
+      const selected = button.dataset.tab === tab;
+      button.setAttribute("aria-selected", String(selected));
+      button.tabIndex = selected ? 0 : -1; // the tab list's one tab stop
     }
     for (const panel of this._panels) panel.hidden = panel.dataset.tab !== tab;
     this._$.leds.hidden = tab === "looks"; // the dots serve painting and the preview
@@ -595,11 +677,14 @@ class TwinklyCanvasCard extends HTMLElement {
       label.textContent = first + 1;
       label.parentElement.hidden = first >= count;
     });
+    const stop = Math.floor(this._stop / PAGE) === page ? this._stop % PAGE : 0;
     this._dots.forEach((dot, k) => {
       const i = page * PAGE + k;
       dot.hidden = i >= count;
+      dot.tabIndex = k === stop ? 0 : -1;
       if (i >= count) return;
-      dot.setAttribute("aria-label", `LED ${i + 1}`);
+      const name = colourName(this._canvas.subarray(i * 4, i * 4 + 4), this._state.colors);
+      dot.setAttribute("aria-label", `LED ${i + 1}, ${name}`);
       dot.setAttribute("aria-pressed", String(this._sel.has(i)));
     });
     for (const chip of this._body.querySelectorAll("[data-filter]")) {
@@ -641,6 +726,8 @@ class TwinklyCanvasCard extends HTMLElement {
       slot.setAttribute("aria-label", pick ? `Remove colour ${k + 1}, ${pick.name}` : `Colour ${k + 1}, empty`);
     });
     for (const control of this._slotControls) control.disabled = this._slots.length === SLOTS;
+    $.play.textContent = this._playing ? "Playing..." : "Play on tree";
+    $.play.setAttribute("aria-disabled", String(Boolean(this._playing)));
     $.slothint.textContent = this._slots.length
       ? "Tap a chosen colour to remove it"
       : "None chosen: the effect's own colours";
@@ -682,6 +769,7 @@ class TwinklyCanvasCard extends HTMLElement {
   /** Play the effect's frames on the dots until another action or other settings. */
   async _preview() {
     this._stopPreview();
+    this._fail(null);
     const ticket = this._ticket;
     const spec = this._spec();
     this._previewed = JSON.stringify(spec);
@@ -718,7 +806,10 @@ class TwinklyCanvasCard extends HTMLElement {
     this._renderOnLights();
     this._renderLooks();
     this._renderGroups();
-    if (focus) [...this._body.querySelectorAll("[data-key]")].find((e) => e.dataset.key === focus)?.focus();
+    if (focus) {
+      const again = [...this._body.querySelectorAll("[data-key]")].find((e) => e.dataset.key === focus);
+      again?.focus({ preventScroll: true });
+    }
   }
 
   _renderOnLights() {
@@ -734,17 +825,20 @@ class TwinklyCanvasCard extends HTMLElement {
       chip.addEventListener("click", () => this._run(command, data));
       return chip;
     };
-    const items = [];
+    const effects = [];
     for (let n = 1; n <= builtins; n++) {
       const current = on && active.type === "builtin" && Number(active.ref) === n - 1;
-      items.push(item(`Built-in ${n}`, `builtin ${n}`, current, "builtin", { effect_id: n - 1 }));
+      effects.push(item(`Built-in ${n}`, `builtin ${n}`, current, "builtin", { effect_id: n - 1 }));
     }
-    for (const movie of movies) {
+    const apps = movies.map((movie) => {
       const current = on && active.type === "app_movie" && movie.unique_id === active.ref;
       const name = movie.name || "Unnamed movie";
-      items.push(item(name, `movie ${movie.id}`, current, "app_movie", { movie_id: movie.id }));
+      return item(name, `movie ${movie.id}`, current, "app_movie", { movie_id: movie.id });
+    });
+    for (const [group, chips] of [[this._$.builtins, effects], [this._$.movies, apps]]) {
+      group.hidden = !chips.length;
+      group.lastElementChild.replaceChildren(...chips);
     }
-    this._$.onlights.replaceChildren(...items);
     const stranded = memory.stranded > 0 ? `, ${memory.stranded} stranded` : "";
     this._$.memtext.textContent = `Memory on the lights: ${Math.round(memory.used_pct)}% used${stranded}`;
     this._$.meterbar.style.width = `${Math.min(100, memory.used_pct)}%`;
@@ -759,20 +853,21 @@ class TwinklyCanvasCard extends HTMLElement {
       const apply = row.appendChild(el("button", "apply-look"));
       apply.dataset.key = `look ${key}`;
       apply.setAttribute("aria-label", look.name);
+      apply.setAttribute("aria-disabled", String(this._applying !== undefined));
       const title = apply.appendChild(el("span", "title"));
       title.append(textEl("span", "lname", look.name));
       if (key === on) {
         apply.setAttribute("aria-current", "true");
         title.append(badge("on now"));
       }
-      title.append(textEl("span", "hint kind", look.kind));
+      title.append(textEl("span", "hint kind", key === this._applying ? "Applying..." : look.kind));
       const strip = apply.appendChild(el("span", "strip"));
       const canvas = bytes(look.canvas);
       for (let k = 0; k < SAMPLES; k++) {
         const i = Math.floor((k * count) / SAMPLES);
         strip.appendChild(el("i")).style.background = shown(canvas.subarray(i * 4, i * 4 + 4));
       }
-      apply.addEventListener("click", () => this._run("look/apply", { name: look.name }));
+      apply.addEventListener("click", () => this._applyLook(look.name));
 
       const more = row.appendChild(textEl("button", "icon", "\u22ee"));
       more.dataset.key = `menu ${key}`;
@@ -786,7 +881,7 @@ class TwinklyCanvasCard extends HTMLElement {
       menu.hidden = key !== this._menu;
       for (const [text, action] of [
         ["Rename", () => this._renameLook(look.name)],
-        ["Update from what's on now", () => this._run("look/update", { name: look.name })],
+        ["Update from what's on now", () => this._updateLook(look.name)],
         ["Delete", () => this._deleteLook(look.name)],
       ]) {
         menu.appendChild(textEl("button", "btn", text)).addEventListener("click", () => {
@@ -825,6 +920,22 @@ class TwinklyCanvasCard extends HTMLElement {
     const taken = this._state.looks.find((look) => nameKey(look.name) === nameKey(name));
     if (taken && !window.confirm(`Replace the look "${taken.name}"?`)) return;
     await this._run("look/save", { name });
+  }
+
+  /** Apply a look; clicks while one applies (a moving look uploads for seconds) do nothing. */
+  async _applyLook(name) {
+    if (this._applying !== undefined) return;
+    this._applying = nameKey(name);
+    this._renderLists();
+    await this._run("look/apply", { name });
+    this._applying = undefined;
+    this._renderLists();
+  }
+
+  async _updateLook(name) {
+    if (window.confirm(`Replace the look "${name}" with what's on now?`)) {
+      await this._run("look/update", { name });
+    }
   }
 
   async _renameLook(name) {
@@ -920,7 +1031,12 @@ class TwinklyCanvasCard extends HTMLElement {
 
   async _saveGroup() {
     const name = window.prompt("Name of the new group")?.trim();
-    if (name) await this._run("group/save", { name, leds: formatSelection(this._sel) });
+    if (!name) return;
+    // the integration matches group names ignoring case and runs of spaces
+    const key = nameKey(name.replace(/\s+/g, " "));
+    const taken = Object.keys(this._state.groups).find((group) => nameKey(group) === key);
+    if (taken && !window.confirm(`Replace the group "${taken}"?`)) return;
+    await this._run("group/save", { name, leds: formatSelection(this._sel) });
   }
 
   /** Paint the selection: the dots change at once, the lights when live is on. */
@@ -930,6 +1046,7 @@ class TwinklyCanvasCard extends HTMLElement {
     this._paints++;
     this._unapplied = !this._live;
     this._draw();
+    this._fail(null);
     try {
       await this._ws("paint", { leds, color, live: this._live });
     } catch (err) {
@@ -944,8 +1061,22 @@ class TwinklyCanvasCard extends HTMLElement {
     if (live && this._unapplied) this._commit(); // the tree catches up with the card
   }
 
+  /** Show the painting on the tree (Apply, Show painting), then the state it left. */
   async _commit() {
-    if (await this._act("commit")) this._unapplied = false;
+    const unapplied = this._unapplied;
+    this._unapplied = false; // a paint while the commit runs sets it again
+    if (await this._act("commit")) await this._load();
+    else this._unapplied ||= unapplied;
+  }
+
+  /** Play on tree; clicks while the effect uploads do nothing. */
+  async _play() {
+    if (this._playing) return;
+    this._playing = true;
+    this._draw();
+    await this._run("effect/play", { spec: this._spec() });
+    this._playing = false;
+    this._draw();
   }
 
   async _find() {
@@ -962,7 +1093,10 @@ class TwinklyCanvasCardEditor extends HTMLElement {
   constructor() {
     super();
     // HA defines ha-form lazily; a built-in card's editor loads it (the usual custom-card idiom)
-    if (!customElements.get("ha-form")) customElements.get("hui-button-card")?.getConfigElement?.();
+    // a failed chunk load leaves the form undefined, without an unhandled rejection
+    if (!customElements.get("ha-form")) {
+      customElements.get("hui-button-card")?.getConfigElement?.()?.catch?.(() => {});
+    }
     this._form = document.createElement("ha-form");
     this._form.schema = EDITOR_SCHEMA;
     this._form.computeLabel = () => "Entity"; // the schema's one field
